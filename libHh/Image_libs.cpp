@@ -81,7 +81,7 @@ static const ImageFiletype* recognize_filetype(const string& pfilename) {
   size_t imax = 0;
   const ImageFiletype* filetype = nullptr;
   for (auto& imagefiletype : k_image_filetypes) {
-    auto i = filename.rfind(string(".") + imagefiletype.suffix);  // supports rootname.bmp.gz
+    auto i = filename.rfind(string(".") + imagefiletype.suffix);  // supports root_name.bmp.gz
     if (i != string::npos && i > imax) {
       imax = i;
       filetype = &imagefiletype;
@@ -149,9 +149,7 @@ void ImageLibs::read_rgb(Image& image, FILE* file) {
     for_int(i, nrows) from_std(&rowstart[i]);
     assertt(read_raw(file, rowsize));
     for_int(i, nrows) from_std(&rowsize[i]);
-    if (0) {
-      for_int(i, nrows) SHOW(i, rowstart[i], rowsize[i]);
-    }
+    if (0) for_int(i, nrows) SHOW(i, rowstart[i], rowsize[i]);
     // Test y-z or z-y order (ideally, sort on rowstart for all y and z).
     bool yzorder =
         image.ysize() && image.zsize() > 1 && rowstart[1 * image.ysize() + 0] < rowstart[0 * image.ysize() + 1];
@@ -211,12 +209,10 @@ void ImageLibs::read_rgb(Image& image, FILE* file) {
       }
     }
   }
-  if (image.zsize() == 1) {
+  if (image.zsize() == 1)
     parallel_for_coords(image.dims(), [&](const Vec2<int>& yx) { image[yx][2] = image[yx][1] = image[yx][0]; });
-  }
-  if (image.zsize() < 4) {
+  if (image.zsize() < 4)
     for (Pixel& pix : image) pix[3] = 255;
-  }
   if (1) image.reverse_y();  // because *.rgb format has image origin at lower-left
 }
 
@@ -350,7 +346,7 @@ void ImageLibs::read_jpg(Image& image, FILE* file) {
   throw std::runtime_error("Library libjpeg is not installed.  See Readme.txt file.");
 #else
   // Note that it would be possible to read from an istream instead of a FILE* as described in
-  //  http://stackoverflow.com/questions/6327784/how-to-use-libjpeg-to-read-a-jpeg-from-a-stdistream
+  //  https://stackoverflow.com/questions/6327784/how-to-use-libjpeg-to-read-a-jpeg-from-a-stdistream
   jpeg_decompress_struct cinfo;
   jpeg_error_mgr jerr;
 
@@ -463,13 +459,10 @@ EXTERN(void) jpeg_write_marker JPP((j_compress_ptr cinfo, int marker, const JOCT
 
 {
   // Save comments except under NONE option
-  if (option != JCOPYOPT_NONE) {
-    jpeg_save_markers(srcinfo, JPEG_COM, 0xFFFF);
-  }
+  if (option != JCOPYOPT_NONE) jpeg_save_markers(srcinfo, JPEG_COM, 0xFFFF);
   // Save all types of APPn markers iff ALL option
-  if (option == JCOPYOPT_ALL) {
+  if (option == JCOPYOPT_ALL)
     for (m = 0; m < 16; m++) jpeg_save_markers(srcinfo, JPEG_APP0 + m, 0xFFFF);
-  }
   jpeg_read_header(&srcinfo, TRUE);
 }
 
@@ -542,9 +535,7 @@ void ImageLibs::write_jpg(const Image& image, FILE* file) {
     assertw(cinfo.jpeg_color_space == JCS_YCbCr);
     assertw(int(cinfo.write_JFIF_header));
   }
-  if (image.zsize() == 4) {
-    Warning("JPEG with alpha is non-standard; color space will likely look wrong");
-  }
+  if (image.zsize() == 4) Warning("JPEG with alpha is non-standard; color space will likely look wrong");
   // Now you can set any non-default parameters you wish to.
   // Here we just illustrate the use of quality (quantization table) scaling:
   if (1) {
@@ -669,7 +660,7 @@ void ImageLibs::read_bmp(Image& image, FILE* file) {
     case 24:
     case 32: assertw(!bmih.biClrUsed); break;
     case 1:
-      if (!assertw(bmih.biClrUsed)) bmih.biClrUsed = 2;  // I do not remember what this is for
+      if (!assertw(bmih.biClrUsed)) bmih.biClrUsed = 2;  // Unclear what this was for.
       assertt(bmih.biClrUsed == 2);
       break;
     case 8:
@@ -704,8 +695,8 @@ void ImageLibs::read_bmp(Image& image, FILE* file) {
       int expected = rowsize * image.ysize();
       int extra = int(bmih.biSizeImage) - expected;
       if (extra)
-        showf("Warning: bmih.biSizeImage=%d expected=%d*%d=%d (%d extra bytes)\n", bmih.biSizeImage, rowsize,
-              image.ysize(), expected, extra);
+        showf("Warning: bmih.biSizeImage=%d expected=%d*%d=%d (%d extra bytes)\n",  //
+              bmih.biSizeImage, rowsize, image.ysize(), expected, extra);
       assertt(extra >= 0);
     }
     Array<uchar> row(rowsize);
@@ -800,6 +791,7 @@ void ImageLibs::read_bmp(Image& image, FILE* file) {
           if (count % 2) {  // pad to 2-byte boundary
             assertt(i < bufsize);
             c = buf[i++];
+            dummy_use(c);
             if (0) assertw(c == 0);  // does not seem true?
           }
         }
@@ -826,11 +818,11 @@ void ImageLibs::read_bmp(Image& image, FILE* file) {
 }
 
 void ImageLibs::write_bmp(const Image& image, FILE* file) {
-  Vec2<char> magic{'B', 'M'};
+  const Vec2<char> magic{'B', 'M'};
   assertt(write_raw(file, magic.view()));
   int ncomp = image.zsize();
   bmp_BITMAPFILEHEADER_HH bmfh;
-  static_assert(sizeof(bmfh) == k_size_BITMAPFILEHEADER - magic.num(), "");
+  static_assert(sizeof(bmfh) == k_size_BITMAPFILEHEADER - magic.num());
   int headers2size = k_size_BITMAPFILEHEADER + sizeof(bmp_BITMAPINFOHEADER);
   bmfh.bfReserved1 = 0;
   to_dos(&bmfh.bfReserved1);
@@ -897,7 +889,7 @@ void ImageLibs::write_bmp(const Image& image, FILE* file) {
     assertt(write_raw(file, ArView(bmfh)));
     assertt(write_raw(file, ArView(bmih)));
     for_int(i, 256) {
-      Vec4<uchar> buf2{uchar(i), uchar(i), uchar(i), uchar{255}};
+      const Vec4<uchar> buf2{uchar(i), uchar(i), uchar(i), uchar{255}};
       assertt(write_raw(file, buf2.view()));
     }
     assertt(write_raw(file, buf));
@@ -1004,7 +996,7 @@ static void my_png_user_warning_fn(png_structp png_ptr, png_const_charp warning_
 
 void ImageLibs::read_png(Image& image, FILE* file) {
   // Note that it would be possible to read from an istream instead of a FILE* using png_set_read_fn() as
-  //   described in http://www.piko3d.net/tutorials/libpng-tutorial-loading-png-files-from-streams/
+  //   described in https://www.piko3d.net/tutorials/libpng-tutorial-loading-png-files-from-streams/
   // (PNG_LIBPNG_VER_STRING, png_voidp(user_error_ptr), user_error_fn, user_warning_fn)
   png_structp png_ptr = assertt(png_create_read_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr));
   png_set_error_fn(png_ptr, png_get_error_ptr(png_ptr), my_png_user_error_fn, my_png_user_warning_fn);
@@ -1109,9 +1101,8 @@ void ImageLibs::read_png(Image& image, FILE* file) {
         // image[y][x][0] = image[y][x][z] ? 255 : 0;
       }
     }
-    if (image.zsize() < 4) {
+    if (image.zsize() < 4)
       for (Pixel& pix : image) pix[3] = 255;
-    }
   }
   png_destroy_read_struct(&png_ptr, &info_ptr, &end_info);
 }
@@ -1130,8 +1121,8 @@ void ImageLibs::write_png(const Image& image, FILE* file) {
                 : image.zsize() == 4 ? PNG_COLOR_TYPE_RGB_ALPHA
                                      : (assertt(false), 0)),
                PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT);
-  if (getenv_bool("PNG_SRGB")) {  // 20080507
-    // It looks unchanged both on the screen and on the printer --> I give up on this.
+  if (getenv_bool("PNG_SRGB")) {  // 2008-05-07
+    // It looks unchanged both on the screen and on the printer --> we give up on this.
     // (The intent was to make the images look less dark on the printer.)
     int srgb_intent = PNG_sRGB_INTENT_PERCEPTUAL;
     png_set_sRGB_gAMA_and_cHRM(png_ptr, info_ptr, srgb_intent);
@@ -1141,7 +1132,7 @@ void ImageLibs::write_png(const Image& image, FILE* file) {
     assertt(level >= 0 && level <= 9);
     png_set_compression_level(png_ptr, level);
   }
-  if (1) {  // 20100103 to get consistent import size into Word
+  if (1) {  // 2010-01-03 to get consistent import size into Word
     // png_set_pHYs(png_ptr, info_ptr, res_x, res_y, unit_type);
     // res_x       - pixels/unit physical resolution in x direction
     // res_y       - pixels/unit physical resolution in y direction
@@ -1211,9 +1202,8 @@ void Image::read_file_libs(const string& filename, bool bgra) {
 }
 
 void Image::write_file_libs(const string& filename, bool bgra) const {
-  if (const ImageFiletype* filetype = recognize_filetype(filename)) {
+  if (const ImageFiletype* filetype = recognize_filetype(filename))
     const_cast<Image&>(*this).set_suffix(filetype->suffix);  // mutable
-  }
   if (suffix() == "") throw std::runtime_error("Image '" + filename + "': no filename suffix specified for writing");
   WFile fi(filename);
   FILE* file = fi.cfile();

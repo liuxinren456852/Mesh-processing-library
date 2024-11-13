@@ -70,7 +70,7 @@ class StackWalkerInternal;  // forward
 class StackWalker {
  public:
   typedef enum StackWalkOptions {
-    // No addition info will be retrived
+    // No addition info will be retrieved
     // (only the address is available)
     RetrieveNone = 0,
 
@@ -86,7 +86,7 @@ class StackWalker {
     // Also retrieve the version for the DLL/EXE
     RetrieveFileVersion = 8,
 
-    // Contains all the abouve
+    // Contains all the above
     RetrieveVerbose = 0xF,
 
     // Generate a "good" symbol-search-path
@@ -95,7 +95,7 @@ class StackWalker {
     // Also use the public Microsoft-Symbol-Server
     SymUseSymSrv = 0x20,
 
-    // Contains all the abouve "Sym"-options
+    // Contains all the above "Sym"-options
     SymAll = 0x30,
 
     // Contains all options (default)
@@ -103,7 +103,7 @@ class StackWalker {
   } StackWalkOptions;
 
   StackWalker(int options = OptionsAll,  // 'int' is by design, to combine the enum-flags
-              LPCSTR szSymPath = NULL, DWORD dwProcessId = GetCurrentProcessId(),
+              LPCSTR szSymPath = nullptr, DWORD dwProcessId = GetCurrentProcessId(),
               HANDLE hProcess = GetCurrentProcess());
   StackWalker(DWORD dwProcessId, HANDLE hProcess);
   virtual ~StackWalker();
@@ -115,9 +115,9 @@ class StackWalker {
 
   BOOL LoadModules();
 
-  BOOL ShowCallstack(HANDLE hThread = GetCurrentThread(), const CONTEXT* context = NULL,
-                     PReadProcessMemoryRoutine readMemoryFunction = NULL,
-                     LPVOID pUserData = NULL  // optional to identify some data in the 'readMemoryFunction'-callback
+  BOOL ShowCallstack(HANDLE hThread = GetCurrentThread(), const CONTEXT* context = nullptr,
+                     PReadProcessMemoryRoutine readMemoryFunction = nullptr,
+                     LPVOID pUserData = nullptr  // optional to identify some data in the 'readMemoryFunction'-callback
   );
 
 #if _MSC_VER >= 1300
@@ -186,12 +186,12 @@ class StackWalker {
 #define GET_CURRENT_CONTEXT(c, contextFlags)                                                                    \
   do {                                                                                                          \
     memset(&c, 0, sizeof(CONTEXT));                                                                             \
-    EXCEPTION_POINTERS* pExp = NULL;                                                                            \
+    EXCEPTION_POINTERS* pExp = nullptr;                                                                         \
     __try {                                                                                                     \
       throw 0;                                                                                                  \
     } __except (((pExp = GetExceptionInformation()) ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_EXECUTE_HANDLER)) { \
     }                                                                                                           \
-    if (pExp != NULL) memcpy(&c, pExp->ContextRecord, sizeof(CONTEXT));                                         \
+    if (pExp != nullptr) memcpy(&c, pExp->ContextRecord, sizeof(CONTEXT));                                      \
     c.ContextFlags = contextFlags;                                                                              \
   } while (0);
 #else

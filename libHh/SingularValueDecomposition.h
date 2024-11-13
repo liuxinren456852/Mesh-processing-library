@@ -2,9 +2,9 @@
 #ifndef MESH_PROCESSING_LIBHH_SINGULARVALUEDECOMPOSITION_H_
 #define MESH_PROCESSING_LIBHH_SINGULARVALUEDECOMPOSITION_H_
 
-#include "libHh/GridOp.h"  // column()
 #include "libHh/Matrix.h"
-#include "libHh/RangeOp.h"  // fill()
+#include "libHh/MatrixOp.h"  // column()
+#include "libHh/RangeOp.h"   // fill()
 
 namespace hh {
 
@@ -16,7 +16,7 @@ namespace hh {
 // Implicitly computes the product A*A^T and then uses a sequence of Jacobi rotations to diagonalize it.
 // Singular values are not sorted.
 template <typename T>
-bool singular_value_decomposition(CMatrixView<T> A, MatrixView<T> U, ArrayView<T> S, MatrixView<T> VT);
+[[nodiscard]] bool singular_value_decomposition(CMatrixView<T> A, MatrixView<T> U, ArrayView<T> S, MatrixView<T> VT);
 
 // Modify the singular value decomposition U * diag(S) * VT^T such that the singular values in S are
 // in decreasing order.
@@ -26,7 +26,7 @@ template <typename T> void sort_singular_values(MatrixView<T> U, ArrayView<T> S,
 
 template <typename T>
 bool singular_value_decomposition(CMatrixView<T> A, MatrixView<T> U, ArrayView<T> S, MatrixView<T> VT) {
-  static_assert(std::is_floating_point<T>::value, "");
+  static_assert(std::is_floating_point_v<T>);
   const int m = A.ysize(), n = A.xsize();
   assertx(n >= 1);
   assertx(m >= n);
@@ -101,7 +101,7 @@ bool singular_value_decomposition(CMatrixView<T> A, MatrixView<T> U, ArrayView<T
 }
 
 template <typename T> void sort_singular_values(MatrixView<T> U, ArrayView<T> S, MatrixView<T> VT) {
-  static_assert(std::is_floating_point<T>::value, "");
+  static_assert(std::is_floating_point_v<T>);
   const int m = U.ysize(), n = U.xsize();
   assertx(n >= 1);
   assertx(m >= n);

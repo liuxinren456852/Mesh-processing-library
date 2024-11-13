@@ -8,9 +8,8 @@
 #if 0
 {
   Graph<int> g;
-  for (int v1 : g) {
+  for (int v1 : g)
     for (int v2 : g.edges(v1)) process_edge(v1, v2);
-  }
 }
 #endif
 
@@ -28,7 +27,7 @@ template <typename T> class Graph : noncopyable {
   using vertex_iterator = typename base::keys_iterator;
   using edges_range = const atype&;
   using edge_iterator = const typename atype::const_iterator;
-  Graph() = default;
+  Graph() {}
   Graph(type&& g) noexcept { swap(*this, g); }
   type& operator=(type&& g) noexcept {
     clear();

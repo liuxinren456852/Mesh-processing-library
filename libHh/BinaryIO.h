@@ -27,9 +27,7 @@ template <typename T> std::istream& read_binary_raw(std::istream& is, ArrayView<
 
 // Read an array of elements and perform Endian conversion from network (Big Endian) to native order.
 template <typename T> std::istream& read_binary_std(std::istream& is, ArrayView<T> ar) {
-  if (read_binary_raw(is, ar)) {
-    for_int(i, ar.num()) from_std(&ar[i]);
-  }
+  if (read_binary_raw(is, ar)) for_int(i, ar.num()) from_std(&ar[i]);
   return is;
 }
 
@@ -46,12 +44,12 @@ template <typename T> std::ostream& write_binary_std(std::ostream& os, CArrayVie
 }
 
 // Read an array of elements without any Endian byte-reordering.  Ret: success.
-template <typename T> bool read_raw(FILE* file, ArrayView<T> ar) {
+template <typename T> [[nodiscard]] bool read_raw(FILE* file, ArrayView<T> ar) {
   return fread(ar.data(), ar.num() * sizeof(T), 1, file) == 1;
 }
 
 // Write an array of elements without any Endian byte-reordering.  Ret: success.
-template <typename T> bool write_raw(FILE* file, CArrayView<T> ar) {
+template <typename T> [[nodiscard]] bool write_raw(FILE* file, CArrayView<T> ar) {
   return fwrite(ar.data(), ar.num() * sizeof(T), 1, file) == 1;
 }
 

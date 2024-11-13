@@ -10,9 +10,9 @@
 #if 0
 {
   ConsoleProgress cprogress;
-  const int n = 10000;
+  const int n = 10'000;
   for_int(i, n) {
-    cprogress.update(static_cast<float>(i) / n);
+    cprogress.update(float(i) / n);
     process(i);
   }
 }
@@ -35,7 +35,7 @@ class ConsoleProgress : noncopyable {
   explicit ConsoleProgress(string task_name = "", bool set_silent = false);
   ~ConsoleProgress() { clear(); }
   void update(float f) {
-    if (!_silent && min(static_cast<int>(f * 100.f), 99) > _last_val) update_i(f);
+    if (!_silent && min(int(f * 100.f), 99) > _last_val) update_i(f);
   }
   void clear();
   static bool set_all_silent(bool v) { return std::exchange(silent_instance(), v); }
@@ -54,8 +54,8 @@ class ConsoleProgress : noncopyable {
 
 class ConsoleProgressInc : public ConsoleProgress {
  public:
-  ConsoleProgressInc(int total, string taskname = "") : ConsoleProgress(std::move(taskname)), _total(total) {}
-  void increment() { update(static_cast<float>(_counter++) / _total); }
+  ConsoleProgressInc(int total, string task_name = "") : ConsoleProgress(std::move(task_name)), _total(total) {}
+  void increment() { update(float(_counter++) / _total); }
 
  private:
   int _total;
@@ -75,10 +75,10 @@ inline void ConsoleProgress::update_i(float f) {
   // - "\a" (7) rings bell.
   // - "\t" (9) is tab (\011).
   // - "\n" (10) is usual newline.
-  // - "\b" (8) erases the last character; I modified emacs shell to do the same.
+  // - "\b" (8) erases the last character; my emacs shell is modified to do the same.
   // - "\r" (13) moves cursor to beginning of line, but does *not* clear the line contents;
-  //  I modified emacs shell to delete backwards to the line beginning.
-  int val = clamp(static_cast<int>(f * 100.f), 0, 99);
+  //    my emacs shell is modified to have "\r" delete backwards to the line beginning.
+  int val = clamp(int(f * 100.f), 0, 99);
   if (val <= _last_val) return;
   {  // synchronize in case multiple threads are updating the object or using ConsoleProgress
     std::lock_guard<std::mutex> lock(global_mutex_instance());
@@ -91,7 +91,7 @@ inline void ConsoleProgress::update_i(float f) {
             str += "\r";  // bad because it could erase shell prompt
           } else {
             const int n = narrow_cast<int>(_task_name.size()) + 6;
-            for_int(i, n) str += '\b';
+            str.append(n, '\b');
           }
         }
         str += "#" + _task_name + ":" + sform("%02d%% ", val);
@@ -102,8 +102,7 @@ inline void ConsoleProgress::update_i(float f) {
           str += "\b\b\b";
         str += sform("%02d%%", val);
       }
-      std::cerr << str;   // write atomically so "prog1.exe | prog2.exe" is OK.
-      std::cerr.flush();  // likely unnecessary
+      std::cerr << str << std::flush;  // write atomically so "prog1.exe | prog2.exe" is OK.
     }
   }
 }
@@ -121,25 +120,24 @@ inline void ConsoleProgress::clear() {
         if (0) {
           str += "\r";
         } else {
-          for_int(i, n) str += '\b';
+          str.append(n, '\b');
         }
         // For cmd.exe console, must erase remainder of line.
-        for_int(i, n) str += ' ';
-        for_int(i, n) str += '\b';
+        str.append(n, ' ');
+        str.append(n, '\b');
       } else {
         // For cmd.exe console, must overwrite "\b" with spaces.
         str = "\b\b\b\b    \b\b\b\b";
       }
-      std::cerr << str;
-      std::cerr.flush();
+      std::cerr << str << std::flush;
     }
   }
 }
 
 inline bool& ConsoleProgress::silent_instance() {
   // Singleton pattern;
-  //  http://stackoverflow.com/a/18032418/1190077
-  //  http://stackoverflow.com/questions/1661529/is-meyers-implementation-of-singleton-pattern-thread-safe
+  //  https://stackoverflow.com/a/18032418
+  //  https://stackoverflow.com/questions/1661529/is-meyers-implementation-of-singleton-pattern-thread-safe
   static bool silent = getenv_bool("NO_CONSOLE_PROGRESS");
   return silent;
 }

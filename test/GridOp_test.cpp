@@ -12,9 +12,8 @@ using namespace hh;
 
 template <int D> void test(const Vec<int, D>& dims, const Vec<int, D>& ndims) {
   Array<const Filter*> filters;  // not: "gaussian", "preprocess", "justspline", "justomoms"
-  for (string s : {"impulse", "box", "triangle", "quadratic", "mitchell", "keys", "spline", "omoms"}) {
+  for (string s : {"impulse", "box", "triangle", "quadratic", "mitchell", "keys", "spline", "omoms"})
     filters.push(&Filter::get(s));
-  }
   {  // inverse convolution is partition-of-unity
     Grid<D, float> grid(dims, 1.f);
     inverse_convolution(grid, ntimes<D>(FilterBnd(Filter::get("spline"), Bndrule::reflected)));
@@ -49,8 +48,8 @@ template <int D> void test(const Vec<int, D>& dims, const Vec<int, D>& ndims) {
   }
   {  // random samples of unity field all reproduce unity
     for (Bndrule bndrule : {Bndrule::reflected, Bndrule::periodic}) {
-      for (string filtername : {"spline", "omoms"}) {
-        const Filter& filter = Filter::get(filtername);
+      for (string filter_name : {"spline", "omoms"}) {
+        const Filter& filter = Filter::get(filter_name);
         Grid<D, float> grid(dims, 1.f);
         Vec<FilterBnd, D> nfilterbs = inverse_convolution(grid, ntimes<D>(FilterBnd(filter, bndrule)));
         // SHOW(Stat(grid));
@@ -78,7 +77,7 @@ template <int D> void test(const Vec<int, D>& dims, const Vec<int, D>& ndims) {
           if (!(bndrule == Bndrule::reflected || bndrule == Bndrule::periodic)) continue;
           filterbs = inverse_convolution(grid, filterbs);
         }
-        for (Vec<int, D> u : range(ogrid.dims())) {
+        for (const Vec<int, D> u : range(ogrid.dims())) {
           Vec<float, D> p;
           for_int(d, D) p[d] = (u[d] + .5f) / ogrid.dim(d);
           float oval = ogrid[u];
@@ -155,7 +154,7 @@ int main() {
     double radius = filter.radius();
     const int n = 30;
     for_int(i, n) {
-      double x = ((double(i) / n) - .5) * radius * 1.1;
+      double x = ((double(i) / n) - .5) * radius * 1.1 + 1e-14;
       showf("func(%12f)=%12f\n", x, func(x));
     }
   }
@@ -169,7 +168,7 @@ int main() {
       double radius = filter.radius();
       bool is_partition_of_unity = filter.is_partition_of_unity();
       SHOW(name);
-      const int n = 100000;  // was 1000000
+      const int n = 100'000;
       {
         double sum = 0., xo = 0.;
         for_int(i, n) {
@@ -191,7 +190,8 @@ int main() {
             double xx = x + double(j);
             if (abs(xx) <= radius) sum += func(xx);
           }
-          stat.enter(float(sum));
+          float float_sum = float(sum);  // For same Stat sd results between CONFIG=win (debug) and others (release).
+          stat.enter(float_sum);
           assertw(abs(sum - 1.) < (is_partition_of_unity ? 1e-5 : .07));  // gaussian needs .07
         }
         if (1) SHOW(stat);
@@ -208,7 +208,7 @@ int main() {
   }
   if (1) {
     // 1D
-    SGrid<int, 5> grid1 = V(1, 2, 3, 4, 5);
+    const SGrid<int, 5> grid1 = V(1, 2, 3, 4, 5);
     SHOW(scale_filter_nearest(grid1.view(), V(1)));
     SHOW(scale_filter_nearest(grid1.view(), V(2)));
     SHOW(scale_filter_nearest(grid1.view(), V(3)));
@@ -218,19 +218,20 @@ int main() {
     SHOW(scale_filter_nearest(grid1.view(), V(10)));
     SHOW(scale_filter_nearest(grid1.view(), V(11)));
     // 2D
-    SGrid<int, 4, 5> grid2 = V(V(1, 2, 3, 4, 5), V(6, 7, 8, 9, 10), V(11, 12, 13, 14, 15), V(16, 17, 18, 19, 20));
+    const SGrid<int, 4, 5> grid2 =
+        V(V(1, 2, 3, 4, 5), V(6, 7, 8, 9, 10), V(11, 12, 13, 14, 15), V(16, 17, 18, 19, 20));
     SHOW(scale_filter_nearest(grid2.view(), V(2, 3)));
     SHOW(scale_filter_nearest(grid2.view(), V(1, 8)));
     SHOW(scale_filter_nearest(grid2.view(), V(4, 10)));
     // 3D
-    SGrid<int, 2, 2, 5> grid3 =
+    const SGrid<int, 2, 2, 5> grid3 =
         V(V(V(1, 2, 3, 4, 5), V(11, 12, 13, 14, 15)), V(V(101, 102, 103, 104, 105), V(111, 112, 113, 114, 115)));
     SHOW(scale_filter_nearest(grid3.view(), V(2, 1, 5)));
     SHOW(scale_filter_nearest(grid3.view(), V(1, 2, 7)));
     SHOW(scale_filter_nearest(grid3.view(), V(1, 1, 3)));
     SHOW(scale_filter_nearest(grid3.view(), V(2, 2, 3)));
     // 4D
-    SGrid<int, 2, 2, 2, 2> grid4 =
+    const SGrid<int, 2, 2, 2, 2> grid4 =
         V(V(V(V(1, 2), V(3, 4)), V(V(5, 6), V(7, 8))), V(V(V(11, 12), V(13, 14)), V(V(15, 16), V(17, 18))));
     SHOW(scale_filter_nearest(grid4.view(), V(2, 2, 2, 2)));
     SHOW(scale_filter_nearest(grid4.view(), V(2, 1, 2, 2)));
@@ -247,7 +248,7 @@ int main() {
     SHOW(grid_column<3>(grid4.view(), V(1, 1, 1, 0)));
   }
   if (1) {
-    Grid<2, Pixel> grid(V(20, 20), Pixel(65, 66, 67, 72));
+    const Grid<2, Pixel> grid(V(20, 20), Pixel(65, 66, 67, 72));
     CGridView<3, Pixel> view = raise_grid_rank(grid);
     assertx(view.dims() == V(1, 20, 20));
     assertx(equal(view[0], grid));

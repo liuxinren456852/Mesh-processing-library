@@ -17,15 +17,15 @@ namespace hh {
 //  provided in x, and places the obtained minimum in x.  It returns false if the solution fails to converge.
 // The optimization iterates until machine-precision convergence, or until a maximum number of evaluations
 //  provided using set_max_neval().
-template <typename Eval = double (&)(ArrayView<double>)> class NonlinearOptimization : noncopyable {
+// Eval = double (&)(ArrayView<double>)
+template <typename Eval> class NonlinearOptimization : noncopyable {
  public:
-  // (renamed x to x_ due to VS2015 bug warning "C4459: declaration of 'x' hides global declaration")
-  explicit NonlinearOptimization(ArrayView<double> x_) : NonlinearOptimization(x_, Eval()) {}
-  explicit NonlinearOptimization(ArrayView<double> x_, Eval eval) : NonlinearOptimization(nullptr, x_, eval) {
+  // (Renamed x to x_ due to Visual Studio bug "C4459: declaration ... hides global declaration".)
+  explicit NonlinearOptimization(ArrayView<double> x_, Eval eval = Eval()) : NonlinearOptimization(nullptr, x_, eval) {
     _debug = getenv_int("NLOPT_DEBUG");
   }
   void set_max_neval(int max_neval) { _max_neval = max_neval; }  // default is -1 which signifies infinity
-  bool solve() { return solve_i(); }                             // ret: success
+  [[nodiscard]] bool solve() { return solve_i(); }               // ret: success
  private:
   // ** Approach-independent:
   ArrayView<double> _x;  // view of user-supplied vector; stores initial estimate and final solution
@@ -44,9 +44,9 @@ template <typename Eval = double (&)(ArrayView<double>)> class NonlinearOptimiza
   //  Mathematical Programming B 45 (3): 503-528.  doi:10.1007/BF01589116.
   // Nocedal (1980).  "Updating quasi-Newton matrices with limited storage".
   //  Mathematics of Computation 35(151), 773-782.  doi:10.1090/S0025-5718-1980-0572855-7.
-  // Useful: http://aria42.com/blog/2014/12/understanding-lbfgs/
-  // (e.g. fortran implementation in http://users.iems.northwestern.edu/~nocedal/lbfgs.html
-  //   and thread-safe C version in https://github.com/chokkan/liblbfgs)
+  // Useful: https://web.archive.org/web/20231002054213/https://aria42.com/blog/2014/12/understanding-lbfgs
+  // (e.g. fortran implementation in https://users.iems.northwestern.edu/~nocedal/lbfgs.html
+  //   and threadsafe C version in https://github.com/chokkan/liblbfgs )
   // (_m not constexpr because V() later accesses it as a const reference)
   const int _m = 6;          // number of stored prior gradients and differences; recommended range 3..7
   const double _eps = 1e-6;  // mag(_g) < _eps*max(1., mag(_x)); default 1e-5 in github.com/chokkan/liblbfgs
@@ -72,7 +72,7 @@ template <typename Eval = double (&)(ArrayView<double>)> class NonlinearOptimiza
   }
   // Backtracking line search to find approximate minimum of f=_eval() along direction p,
   //  with initial step size alpha.  Updates number of evaluations neval.  Ret: success.
-  bool line_search(double& f, CArrayView<double> p, double& alpha, int& neval, int iter) {
+  [[nodiscard]] bool line_search(double& f, CArrayView<double> p, double& alpha, int& neval, int iter) {
     // https://en.wikipedia.org/wiki/Backtracking_line_search
     const double finit = f;  // initial f
     _xinit.assign(_x);       // initial _x
@@ -139,6 +139,9 @@ template <typename Eval = double (&)(ArrayView<double>)> class NonlinearOptimiza
     assertnever("NonlinearOptimization fails unexpectedly");
   }
 };
+
+// Template deduction guide:
+template <typename Eval> NonlinearOptimization(ArrayView<double> x_, Eval eval) -> NonlinearOptimization<Eval>;
 
 }  // namespace hh
 

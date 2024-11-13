@@ -6,8 +6,8 @@ namespace hh {
 Mk3d::Mk3d(WA3dStream& pos) : _os(pos) { _os.write_comment(" Init Mk3d"); }
 
 Mk3d::~Mk3d() {
-  _os.write_comment(sform(" End Mk3d: %dgons %dlines %dpoints, %dverts(max %d)", _total_polygons, _total_polylines,
-                          _total_points, _total_vertices, _max_vertices));
+  _os.write_comment(sform(" End Mk3d: %dgons %dlines %dpoints, %dverts(max %d)",  //
+                          _total_polygons, _total_polylines, _total_points, _total_vertices, _max_vertices));
   _os.flush();
   assertw(_stack_frame.empty());
   assertw(_ctm.is_ident());
@@ -19,30 +19,28 @@ Mk3d::~Mk3d() {
 
 void Mk3d::scale(float x, float y, float z) {
   if ((x <= 0 && x != -1) || (y <= 0 && y != -1) || (z <= 0 && z != -1)) {
-    if (Warning("mk3d: strange scale()")) {
-      SHOW(x, y, z);
-    }
+    if (Warning("mk3d: strange scale()")) SHOW(x, y, z);
   }
   apply(Frame::scaling(V(x, y, z)));
 }
 
 void Mk3d::scale_color(float sr, float sg, float sb) {
-  _cc.d[0] *= sr, _cc.d[1] *= sg, _cc.d[2] *= sb;
-  _cc.s[0] *= sr, _cc.s[1] *= sg, _cc.s[2] *= sb;
+  _cc.d *= V(sr, sg, sb);
+  _cc.s *= V(sr, sg, sb);
 }
 
 void Mk3d::normal(const Vector& normal) {
-  bool mod = false;
+  bool modified = false;
   assertx(_el.num());
   Vector tn = transform(normal);
   assertw(tn.normalize());
   for_int(i, 3) {
     if (abs(tn[i]) < 1e-5f) {
       tn[i] = 0.f;
-      mod = true;
+      modified = true;
     }
   }
-  if (mod) assertw(tn.normalize());
+  if (modified) assertw(tn.normalize());
   _el[_el.num() - 1].n = tn;
 }
 

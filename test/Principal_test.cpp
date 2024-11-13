@@ -31,8 +31,8 @@ void test(MatrixView<float> mi) {
 
 void read_data(Matrix<float>& mi) {
   RFile fi("lvl00.greencells_161b_tor.nontrsf.txt");
-  string sline;
-  for_int(i, 4) assertx(my_getline(fi(), sline));
+  string line;
+  for_int(i, 4) assertx(my_getline(fi(), line));
   const int m = 4096, n = 75;
   mi.init(m, n);
   for_int(j, n) for_int(i, m) assertx(fi() >> mi[i][j]);
@@ -51,13 +51,13 @@ void test_inc() {
   Matrix<float> mo1(n, n);
   Array<float> eimag1(n);
   {
-    HH_TIMER(_pc1);
+    HH_TIMER("_pc1");
     principal_components(mi, mo1, eimag1);
   }
   Matrix<float> mo2(ne, n);
   Array<float> eimag2(ne);
   {
-    HH_TIMER(_pc2);
+    HH_TIMER("_pc2");
     incr_principal_components(mi, mo2, eimag2, 2);
   }
   for_int(i, ne) {
@@ -80,7 +80,7 @@ void test_em() {
   Matrix<float> mo1(n, n);
   Array<float> eimag1(n);
   {
-    HH_TIMER(_pc1);
+    HH_TIMER("_pc1");
     principal_components(mi, mo1, eimag1);
   }
   float sum = float(mag2(eimag1));
@@ -88,12 +88,12 @@ void test_em() {
   Matrix<float> mo2(ne, n);
   Array<float> eimag2(ne);
   {
-    HH_TIMER(_pc2);
+    HH_TIMER("_pc2");
     assertx(em_principal_components(mi, mo2, eimag2, 10));
   }
   float sumest = float(mag2(eimag2));
-  showf("sum=%g  sumest=%g (%g)  sumact=%g (%g) (lost=%g)\n", sum, sumest, sumest / sum, sumact, sumact / sum,
-        sumact / sum - sumest / sum);
+  showf("sum=%g  sumest=%g (%g)  sumact=%g (%g) (lost=%g)\n",  //
+        sum, sumest, sumest / sum, sumact, sumact / sum, sumact / sum - sumest / sum);
   {
     double var = 0.f;
     for_int(y, mi.ysize()) var += mag2(mi[y]);

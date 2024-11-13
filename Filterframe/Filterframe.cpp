@@ -1,7 +1,7 @@
 // -*- C++ -*-  Copyright (c) Microsoft Corporation; see license.txt
 #include "libHh/Args.h"
 #include "libHh/FrameIO.h"
-#include "libHh/GeomOp.h"      // euler_angles_to_frame()
+#include "libHh/GeomOp.h"
 #include "libHh/Quaternion.h"  // pow(Frame, float)
 #include "libHh/RangeOp.h"
 #include "libHh/Stat.h"
@@ -9,77 +9,73 @@ using namespace hh;
 
 namespace {
 
-bool noinput = false;
 int every = 0;
 int object = -1;
-bool ginverse = false;
-bool toasciit = false;  //  "toascii" seems to be a reserved identifier in Win32
-bool tobinary = false;
+bool g_inverse = false;
+bool b_orthonormalize = false;
+bool snap_to_axes = false;
+float induce_roll = 0.f;
+float lowpass = 1.f;  // Note that 1.f == no filtering.
+bool add_mid_frames = false;
 double delay = 0.;
+int repeat = 1;
+bool eof1 = false;
+bool toasciit = false;  //  The name "toascii" seems to be a reserved identifier in Win32.
+bool tobinary = false;
+
 bool is_pretransf = false;
+Frame cpretransf;
 bool is_transf = false;
-Frame cpretransf, ctransf;
+Frame ctransf;
+bool statistics = false;
+bool b_frame = false;
+
+bool noinput = false;
 int icount = 0;
 int ocount = 0;
-bool b_frame = false;
-bool statistics = false;
-bool eof1 = false;
-int repeat = 1;
-bool orthonormalize = false;
-float induce_roll = 0.f;
-bool add_mid_frames = false;
-float lowpass = 1.f;  // 1.f == no filtering
 
 void do_create_euler(Args& args) {
-  float yaw = to_rad(args.get_float());
-  float pitch = to_rad(args.get_float());
-  float roll = to_rad(args.get_float());
-  Vec3<float> angles(yaw, pitch, roll);
-  Frame frame = Frame::identity();
-  euler_angles_to_frame(angles, frame);
-  int obn = 0;
-  float zoom = 0.f;
-  bool bin = false;
-  assertx(FrameIO::write(std::cout, frame, obn, zoom, bin));
+  const float yaw = rad_from_deg(args.get_float());
+  const float pitch = rad_from_deg(args.get_float());
+  const float roll = rad_from_deg(args.get_float());
+  const Vec3<float> angles(yaw, pitch, roll);
+  const Frame frame = frame_from_euler_angles(angles, Frame::identity());
+  assertx(FrameIO::write(std::cout, ObjectFrame{frame}));
   noinput = true;
 }
 
-void do_induce_roll(Frame& t) {
+void do_inverse() { g_inverse = true; }
+
+void apply_induce_roll(Frame& t) {
   static int icount1 = 0;
   static Point p0, p1, p2;
   p0 = p1;
   p1 = p2;
   p2 = t.p();
-  p2[2] = 0;  // set elevations to zero
+  p2[2] = 0;  // Set elevations to zero.
   icount1++;
   if (icount1 < 3) return;
-  double v1x = double(p1[0]) - p0[0];
-  double v1y = double(p1[1]) - p0[1];
-  double v2x = double(p2[0]) - p0[0];
-  double v2y = double(p2[1]) - p0[1];
-  float sarea = float(v1y * v2x - v1x * v2y);
+  const double v1x = double(p1[0]) - p0[0];
+  const double v1y = double(p1[1]) - p0[1];
+  const double v2x = double(p2[0]) - p0[0];
+  const double v2y = double(p2[1]) - p0[1];
+  const float sarea = float(v1y * v2x - v1x * v2y);
   const int num = 5;
   static Vec<float, num> sa;
   for_int(i, num - 1) sa[i] = sa[i + 1];
   sa[num - 1] = sarea;
-  float s = float(sum(sa));
-  s /= num;
-  float bank = s * induce_roll;
+  const float s = float(sum(sa)) / num;
+  const float bank = s * induce_roll;
   t = Frame::rotation(0, bank) * t;
   HH_SSTAT(Sbank, bank);
-  // Not used: it couldn't estimate curvature well enough from
-  //  my gcanyon_4k2k_fly2.frame file.
+  // Not used: it couldn't estimate curvature well enough from my gcanyon_4k2k_fly2.frame file.
 }
 
-bool loop() {
-  Frame t;
-  int obn;
-  float zoom;
-  bool bin;
-  if (!FrameIO::read(std::cin, t, obn, zoom, bin)) return true;
+bool process_frame(ObjectFrame& object_frame) {
+  Frame& t = object_frame.frame;
   icount++;
-  if (object >= 0) obn = object;
-  if (ginverse) assertw(t.invert());
+  if (object >= 0) object_frame.obn = object;
+  if (g_inverse) assertw(t.invert());
   if (is_pretransf) t = cpretransf * t;
   if (is_transf) t = t * ctransf;
   if (lowpass != 1.f) {
@@ -87,38 +83,40 @@ bool loop() {
     static float zo;
     if (icount > 1) {
       t = to * pow(~to * t, lowpass);
-      zoom = zo * (1.f - lowpass) + zoom * lowpass;
+      object_frame.zoom = zo * (1.f - lowpass) + object_frame.zoom * lowpass;
     }
     to = t;
-    zo = zoom;
+    zo = object_frame.zoom;
   }
-  if (orthonormalize) {
-    for_int(i, 3) assertw(t.v(i).normalize());
-    Vector v2 = cross(t.v(0), t.v(1));
-    float vdot = dot(v2, t.v(2));
-    assertx(abs(vdot) > .99f);
-    t.v(2) = v2 * sign(vdot);
+  if (b_orthonormalize) orthonormalize(t);
+  if (snap_to_axes) {
+    for_int(i, 3) {
+      Vector& vec = t.v(i);
+      const int axis = arg_max(abs(vec));
+      for_int(j, 3) vec[j] = j == axis ? sign(vec[j]) : 0.f;
+    }
+    t.p() = Point(0.f, 0.f, 0.f);
+    object_frame.zoom = 0.f;
   }
-  if (induce_roll) do_induce_roll(t);
+  if (induce_roll) apply_induce_roll(t);
   if (add_mid_frames) {
     static Frame to;
     static float zo;
     if (icount > 1) {
       Frame tn = to * pow(~to * t, .5f);
       tn.p() = interp(to.p(), t.p(), .5f);
-      float zn = (zoom + zo) * .5f;
-      if (!FrameIO::write(std::cout, tn, obn, zn, bin)) return true;
+      const float zn = (object_frame.zoom + zo) * .5f;
+      const ObjectFrame object_frame_new{tn, object_frame.obn, zn, object_frame.binary};
+      if (!FrameIO::write(std::cout, object_frame_new)) return true;
     }
     to = t;
-    zo = zoom;
+    zo = object_frame.zoom;
   }
-  if (toasciit) bin = false;
-  if (tobinary) bin = true;
+  if (toasciit) object_frame.binary = false;
+  if (tobinary) object_frame.binary = true;
   if (statistics) {
     static Point plast;
-    if (icount > 1) {
-      HH_SSTAT(Sdisp, dist(t.p(), plast));
-    }
+    if (icount > 1) HH_SSTAT(Sdisp, dist(t.p(), plast));
     plast = t.p();
     HH_SSTAT(Sxlen, mag(t.v(0)));
     HH_SSTAT(Sylen, mag(t.v(1)));
@@ -130,7 +128,7 @@ bool loop() {
   }
   for_int(irepeat, repeat) {
     if (delay) my_sleep(delay);
-    if (!FrameIO::write(std::cout, t, obn, zoom, bin)) return true;
+    if (!FrameIO::write(std::cout, object_frame)) return true;
     ocount++;
     if (b_frame) std::cout << "f 0 0 0\n";
     if (ocount == 1 && eof1) std::cout << "q 0 0 0\n";
@@ -139,9 +137,11 @@ bool loop() {
   return false;
 }
 
-void process() {
+void process_frames() {
   for (;;) {
-    if (loop()) break;
+    auto object_frame = FrameIO::read(std::cin);
+    if (!object_frame) break;
+    process_frame(*object_frame);
   }
   if (!std::cin.good() && !std::cin.eof()) {
     assertnever("Read error");
@@ -157,16 +157,18 @@ void process() {
 int main(int argc, const char** argv) {
   string transf;
   string pretransf;
-  bool frame = false, stat = false;
+  bool orthonormalize = false, frame = false, stat = false;
   ParseArgs args(argc, argv);
+  HH_ARGSC("A frame stream is read from stdin or first arg except with the following arguments:");
   HH_ARGSD(create_euler, "yaw pitch roll : create frame from Euler angles (degrees)");
-  HH_ARGSC("", ":**");
+  HH_ARGSC("", ":");
   HH_ARGSP(every, "i : use only every ith element");
   HH_ARGSP(object, "obn : force object # to obn");
-  args.f("-inverse", ginverse, ": normalize normals");
+  HH_ARGSD(inverse, ": replace each frame by its inverse");
   HH_ARGSP(pretransf, "'frame' : pre-transform by frame");
   HH_ARGSP(transf, "'frame' : post-transform by frame");
   HH_ARGSF(orthonormalize, ": orthonormalize frame");
+  HH_ARGSF(snap_to_axes, ": change each frame vector to the nearest axis");
   HH_ARGSP(induce_roll, "factor : for flight over terrain");
   HH_ARGSP(lowpass, "factor : contribution of new frame [0..1]");
   HH_ARGSF(add_mid_frames, ": add interpolating frame between each pair");
@@ -186,8 +188,9 @@ int main(int argc, const char** argv) {
     is_transf = true;
     ctransf = FrameIO::parse_frame(transf);
   }
+  b_orthonormalize = orthonormalize;
   statistics = stat;
   b_frame = frame;
-  if (!noinput) process();
+  if (!noinput) process_frames();
   return 0;
 }

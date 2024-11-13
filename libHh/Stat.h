@@ -2,7 +2,7 @@
 #ifndef MESH_PROCESSING_LIBHH_STAT_H_
 #define MESH_PROCESSING_LIBHH_STAT_H_
 
-#include <fstream>  // std::ofstream
+#include <fstream>  // ofstream
 
 #include "libHh/Range.h"  // enable_if_range_t<>
 
@@ -14,7 +14,10 @@
   }
   HH_SSTAT(Svanum, va.num());
   SHOW(Stat(V(1., 4., 5., 6.)).sdv());
-  // getenv_bool("STAT_FILES") -> store all data values in files.
+  // getenv_bool("STAT_FILES") : If true, store all entered data values in ./Stat.* files.
+  Stat::set_show_stats(-1);  // Or "export SHOW_STATS=-1": only print in showff().
+  Stat::set_show_stats(-2);  // Or "export SHOW_STATS=-2": disable printing of all statistics.
+  // getenv_bool("HH_HIDE_SUMMARIES") : If true, omit summary of statistics.
 }
 #endif
 
@@ -23,28 +26,22 @@ namespace hh {
 // Accumulate statistics for a stream of arithmetic values.
 class Stat {
  public:
-  explicit Stat(string pname = "", bool print = false, bool is_static = false);
-  explicit Stat(const char* pname, bool print = false, bool is_static = false);
-  Stat(Stat&& s) noexcept : _print(false) { swap(*this, s); }  // not default
-  template <typename R, typename = enable_if_range_t<R>> explicit Stat(R&& range);
+  explicit Stat(string name_ = "", bool print = false, bool is_static = false);
+  explicit Stat(const char* name_, bool print = false, bool is_static = false);
+  Stat(Stat&& s) noexcept : _print(false) { swap(*this, s); }  // Not "= default".
+  template <typename Range, typename = enable_if_range_t<Range>> explicit Stat(Range&& range);
   ~Stat();
-  Stat& operator=(Stat&& s) noexcept {
-    _pofs = nullptr;
-    _print = false;
-    swap(*this, s);
-    return *this;
-  }
-  void set_name(string pname) { _name = std::move(pname); }
+  Stat& operator=(Stat&& s) noexcept;
+  void set_name(string name_) { _name = std::move(name_); }
   void set_print(bool print) { _print = print; }
-  void set_rms() { _setrms = true; }  // show rms instead of sdv
+  void set_rms() { _use_rms = true; }  // Show rms instead of sdv.
   void zero();
-  void terminate();
-  void enter(float f);
-  void enter(double f) { enter(static_cast<float>(f)); }
-  void enter(int f) { enter(static_cast<float>(f)); }
-  void enter(unsigned f) { enter(static_cast<float>(f)); }
-  void enter_multiple(float f, int fac);  // fac could be negative
-  void remove(float f) { enter_multiple(f, -1); }
+  void enter(float value);
+  void enter(double value);
+  void enter(int value) { enter(double(value)); }
+  void enter(unsigned value) { enter(double(value)); }
+  void enter_multiple(float value, int factor);  // Factor may be negative.
+  void remove(float value) { enter_multiple(value, -1); }
   void add(const Stat& st);
   const string& name() const { return _name; }
   int64_t num() const { return _n; }
@@ -52,52 +49,57 @@ class Stat {
   float min() const { return _min; }
   float max() const { return _max; }
   float avg() const;
-  float var() const;  // sample variance (rather than population variance)
+  float var() const;  // Sample variance (rather than population variance).
   float sdv() const { return sqrt(var()); }
   float ssd() const;
-  float sum() const { return static_cast<float>(_sum); }
+  float sum() const { return float(_sum); }
   float rms() const;
   float max_abs() const { return std::max(abs(min()), abs(max())); }
-  string short_string() const;  // no leading name, no trailing '\n'
-  string name_string() const;   // operator<<() uses namestring format
+  string short_string() const;  // No leading name, no trailing '\n'.
+  string name_string() const;   // Used by operator<<().
   friend void swap(Stat& l, Stat& r) noexcept;
   friend std::ostream& operator<<(std::ostream& os, const Stat& st) { return os << st.name_string(); }
+  //
+  static int show_stats() { return _s_show; }
+  static void set_show_stats(int val) { _s_show = val; }
 
  private:
   string _name;
-  bool _print;  // print statistics in destructor
-  bool _setrms{false};
+  bool _print;  // Print statistics in destructor.
+  bool _use_rms{false};
   int64_t _n;
   double _sum;
   double _sum2;
   float _min;
   float _max;
-  unique_ptr<std::ofstream> _pofs;  // if getenv_bool("STAT_FILES")
-  // if add any member variables, be sure to update swap()
+  unique_ptr<std::ofstream> _ofs;  // Defined if getenv_bool("STAT_FILES").
+  static int _s_show;
+  // If add any member variables, be sure to update member function swap().
   friend class Stats;
-  void output(float f) const;
+  void output(float value) const;
+  void summary_terminate();
 };
 
 template <> HH_DECLARE_OSTREAM_EOL(Stat);
 
 // Like Stat(range), but later specialized to operate on magnitude of Vector4 elements.
-template <typename R, typename = enable_if_range_t<R>> Stat range_stat(const R& range);
+template <typename Range, typename = enable_if_range_t<Range>> Stat range_stat(const Range& range);
 
 // Scale and offset a range of values such that they have mean == 0 and sdv == 1.
 // This is equivalent to converting each value to its z-score in the distribution.
 // Note that this modifies the range in-place, so use standardize(clone(range)) to preserve it.
-template <typename R, typename = enable_if_range_t<R>> R standardize(R&& range);
+template <typename Range, typename = enable_if_range_t<Range>> Range standardize(Range&& range);
 
 // Scale a range of values such that they have rms == 1.
 // Note that this modifies the range in-place, so use standardize_rms(clone(range)) to preserve it.
-template <typename R, typename = enable_if_range_t<R>> R standardize_rms(R&& range);
+template <typename Range, typename = enable_if_range_t<Range>> Range standardize_rms(Range&& range);
 
 #define HH_STAT(S) \
   hh::Stat S { #S, true }
-#define HH_STATNP(S) \
-  hh::Stat S { #S, false }  // no print
+#define HH_STAT_NP(S) \
+  hh::Stat S { #S, false }  // No print.
 
-// static Stat
+// Static Stat, which gets reported at program termination (or in hh_clean_up()).
 #define HH_SSTAT(S, v)                                  \
   do {                                                  \
     static hh::Stat& S = *new hh::Stat(#S, true, true); \
@@ -110,7 +112,7 @@ template <typename R, typename = enable_if_range_t<R>> R standardize_rms(R&& ran
     S.enter(v);                                         \
   } while (false)
 
-// range Stat
+// Range Stat.
 #define HH_RSTAT(S, range) \
   do {                     \
     HH_STAT(S);            \
@@ -129,28 +131,45 @@ template <typename R, typename = enable_if_range_t<R>> R standardize_rms(R&& ran
 
 //----------------------------------------------------------------------------
 
-template <typename R, typename> Stat::Stat(R&& range) : Stat{} {
+template <typename Range, typename> Stat::Stat(Range&& range) : Stat{} {
   for (const auto& e : range) enter(e);
 }
 
-inline void Stat::enter(float f) {
-  _n++;
-  _sum += static_cast<double>(f);
-  _sum2 += square(static_cast<double>(f));
-  if (f < _min) _min = f;
-  if (f > _max) _max = f;
-  if (_pofs) output(f);
+inline Stat& Stat::operator=(Stat&& s) noexcept {
+  _ofs = nullptr;
+  _print = false;
+  swap(*this, s);
+  return *this;
 }
 
-inline void Stat::enter_multiple(float f, int fac) {
-  _n += fac;
-  _sum += static_cast<double>(f) * fac;
-  _sum2 += square(static_cast<double>(f)) * fac;
-  if (f < _min) _min = f;
-  if (f > _max) _max = f;
-  if (_pofs) for_int(i, fac) {
-      output(f);
-    }
+inline void Stat::enter(float value) {
+  _n++;
+  const double d = value;
+  _sum += d;
+  _sum2 += square(d);
+  if (value < _min) _min = value;
+  if (value > _max) _max = value;
+  if (_ofs) output(value);
+}
+
+inline void Stat::enter(double d) {
+  _n++;
+  _sum += d;
+  _sum2 += square(d);
+  const float value = float(d);
+  if (value < _min) _min = value;
+  if (value > _max) _max = value;
+  if (_ofs) output(value);
+}
+
+inline void Stat::enter_multiple(float value, int factor) {
+  _n += factor;
+  const double d = value;
+  _sum += d * factor;
+  _sum2 += square(d) * factor;
+  if (value < _min) _min = value;
+  if (value > _max) _max = value;
+  if (_ofs) for_int(i, factor) output(value);
 }
 
 inline float Stat::avg() const {
@@ -158,7 +177,7 @@ inline float Stat::avg() const {
     Warning("avg() of empty");
     return 0.f;
   }
-  return static_cast<float>(_sum / static_cast<double>(_n));
+  return float(_sum / _n);
 }
 
 inline float Stat::var() const {
@@ -166,7 +185,7 @@ inline float Stat::var() const {
     Warning("Stat::var() of fewer than 2 elements");
     return 0.f;
   }
-  return static_cast<float>(std::max((_sum2 - _sum * _sum / static_cast<double>(_n)) / (_n - 1.), 0.));
+  return float(std::max((_sum2 - _sum * _sum / _n) / (_n - 1.), 0.));
 }
 
 inline float Stat::ssd() const {
@@ -174,7 +193,7 @@ inline float Stat::ssd() const {
     Warning("ssd() of empty");
     return 0.f;
   }
-  return static_cast<float>(std::max(_sum2 - _sum * _sum / static_cast<double>(_n), 0.));
+  return float(std::max(_sum2 - _sum * _sum / _n, 0.));
 }
 
 inline float Stat::rms() const {
@@ -182,16 +201,13 @@ inline float Stat::rms() const {
     Warning("rms() of empty");
     return 0.f;
   }
-  return sqrt(static_cast<float>(_sum2 / static_cast<double>(_n)));
+  return sqrt(float(_sum2 / _n));
 }
 
-template <typename R, typename> Stat range_stat(const R& range) {
-  Stat stat;
-  for (auto e : range) stat.enter(e);
-  return stat;
-}
+// Specialized in Multigrid.h.
+template <typename Range, typename> Stat range_stat(const Range& range) { return Stat(range); }
 
-template <typename R, typename> R standardize(R&& range) {
+template <typename Range, typename> Range standardize(Range&& range) {
   Stat stat = range_stat(range);
   const float sdv = stat.sdv();
   if (!sdv) {
@@ -200,11 +216,11 @@ template <typename R, typename> R standardize(R&& range) {
     const float avg = stat.avg(), rsdv = 1.f / sdv;
     for (float& e : range) e = (e - avg) * rsdv;
   }
-  return std::forward<R>(range);
+  return std::forward<Range>(range);
 }
-// R standardized(const R& range) { return standardize(clone(range)); }
+// Range standardized(const Range& range) { return standardize(clone(range)); }
 
-template <typename R, typename> R standardize_rms(R&& range) {
+template <typename Range, typename> Range standardize_rms(Range&& range) {
   Stat stat = range_stat(range);
   const float rms = stat.rms();
   if (!rms) {
@@ -213,9 +229,9 @@ template <typename R, typename> R standardize_rms(R&& range) {
     const float rrms = 1.f / rms;
     for (auto& e : range) e *= rrms;
   }
-  return std::forward<R>(range);
+  return std::forward<Range>(range);
 }
-// R standardized_rms(const R& range) { return standardize_rms(clone(range)); }
+// Range standardized_rms(const Range& range) { return standardize_rms(clone(range)); }
 
 }  // namespace hh
 

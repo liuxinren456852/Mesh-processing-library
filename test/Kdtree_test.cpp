@@ -5,8 +5,9 @@ using namespace hh;
 int main() {
   {
     struct cbf {
-      Kdtree<int, 1>::ECallbackReturn operator()(const int& id, ArrayView<float> /*unused*/,
-                                                 ArrayView<float> /*unused*/, Kdtree<int, 1>::CBloc /*unused*/) const {
+      Kdtree<int, 1>::ECallbackReturn operator()(const int& id, Vec<float, 1>& bb0, Vec<float, 1>& bb1,
+                                                 Kdtree<int, 1>::CBloc floc) const {
+        dummy_use(bb0, bb1, floc);
         showf("found index %d\n", id);
         return Kdtree<int, 1>::ECallbackReturn::nothing;
       }
@@ -76,14 +77,15 @@ int main() {
 }
 
 namespace hh {
+
 template class Kdtree<unsigned, 1>;
 template class Kdtree<float, 2>;
 template class Kdtree<double, 3>;
 
 using U = unique_ptr<int>;
-// void Kdtree<U, 2>::enter1(const U&, const float*, const float*) { } // definition illegal
-template <> Kdtree<U, 2>::Entry::Entry(const U&) {}          // definition illegal
-template <> void Kdtree<U, 2>::rec_print(int, int) const {}  // SHOW(U) undefined
+// Override illegal definitions for U:
+template <> void Kdtree<U, 2>::enter_i(const U&, const Vec<float, 2>&, const Vec<float, 2>&) {}
+template <> void Kdtree<U, 2>::rec_print(int, int) const {}
 template class Kdtree<U, 2>;
-// full instantiation still tries to instantiate Kdtree::Entry::Entry(const T&), so it fails.
+
 }  // namespace hh

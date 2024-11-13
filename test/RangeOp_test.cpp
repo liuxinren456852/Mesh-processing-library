@@ -1,8 +1,15 @@
 // -*- C++ -*-  Copyright (c) Microsoft Corporation; see license.txt
 #include "libHh/RangeOp.h"
 
+#include <list>
+#include <vector>
+
 #include "libHh/Advanced.h"  // clone()
 #include "libHh/Array.h"
+#include "libHh/Map.h"
+#include "libHh/Mesh.h"
+#include "libHh/PArray.h"
+#include "libHh/Vec.h"
 using namespace hh;
 
 int main() {
@@ -36,8 +43,8 @@ int main() {
     SHOW(count(ar2, 0));
     SHOW(count(ar2, 3));
     SHOW(count(ar2, 99));
-    // SHOW(count_if(ar2, [](uchar uc) { return uc > 5; }));  // compilation error (lambda used in decltype of SHOW)
-    auto func_gt5 = [](uchar uc) { return uc > 5; };
+    // SHOW(count_if(ar2, [](uchar uc) { return uc > 5; }));  // Error (lambda used in decltype of SHOW); needs C++20.
+    const auto func_gt5 = [](uchar uc) { return uc > 5; };
     SHOW(count_if(ar2, func_gt5));
   }
   {
@@ -71,14 +78,12 @@ int main() {
     SHOW(mean(ar));
   }
   {
-    SHOW(details::has_begin<Array<float>>::value ? 1 : 0);
-    SHOW(details::has_begin<std::fstream>::value ? 1 : 0);
+    SHOW(is_range_v<Array<float>> ? 1 : 0);
+    SHOW(is_range_v<std::fstream> ? 1 : 0);
     struct S {
       int _a;
     };
-    // "!!" necessary in gcc 4.8.2 debug,
-    //  else linker error "ld: RangeOp_test.cpp: undefined reference to `hh::details::has_begin<main::S>::value'"
-    SHOW(!!details::has_begin<S>::value);
+    SHOW(is_range_v<S>);
   }
   {
       // This should fail to compile.
@@ -106,5 +111,74 @@ int main() {
       std::rotate(ar.begin(), &ar[2], ar.end());
       SHOW(ar);
     }
+  }
+  {
+    Array<int> ar2 = {6, 4, 2};
+    for (int i : transform(ar2, [](int j) { return j * j; })) SHOW(i);
+  }
+  {
+    for (int i : transform(std::vector<int>{10, 11}, [](int j) { return j * j; })) SHOW(i);
+  }
+  {
+    Array<int> result;
+    const Array<int> ar1{3, 4, 5};
+    for (int i : concatenate(V(1, 2), ar1)) result.push(i);
+    int c_array[1] = {6};
+    for (int i : concatenate(c_array, PArray<int, 2>{7, 8, 9})) result.push(i);
+    for (int i : concatenate(std::vector<int>{10, 11}, std::list<int>{12, 13})) result.push(i);
+    std::vector<int> vector{14, 15};
+    std::list<int> list{16, 17};
+    for (int i : concatenate(vector, list)) result.push(i);
+    SHOW(result);
+  }
+  {
+    const Array<int> ar1{3, 4, 5, 6};
+    const Array<int> ar2{filter(ar1, [](int i) { return i != 3 && i != 6; })};
+    SHOW(ar2);
+  }
+  {
+    assertx(index(range(10), 3) == 3);
+    assertx(index(V(3, 5, 7), 5) == 1);
+  }
+  {
+    Array<int> indices;
+    Array<char> chars;
+    for (const auto [i, ch] : enumerate(string("ABC"))) {
+      indices.push(int(i));
+      chars.push(ch);
+    }
+    SHOW(indices);
+    SHOW(chars);
+  }
+  {
+    static_assert(is_range_v<Array<float>>);
+    static_assert(std::is_same_v<range_value_t<Array<float>>, float>);
+    static_assert(!is_range_v<std::pair<float, float>>);
+    static_assert(range_has_size_v<Array<float>>);
+    static_assert(random_access_range_v<Array<float>>);
+    static_assert(range_has_size_v<PArray<int, 3>>);
+    static_assert(random_access_range_v<PArray<int, 3>>);
+    Map<int, float> map;
+    static_assert(range_has_size_v<decltype(map.keys())>);
+    static_assert(!random_access_range_v<decltype(map.keys())>);
+    Mesh mesh;
+    static_assert(range_has_size_v<decltype(mesh.vertices())>);
+    static_assert(!random_access_range_v<decltype(mesh.vertices())>);
+    static_assert(range_has_size_v<decltype(mesh.ordered_vertices())>);
+    static_assert(random_access_range_v<decltype(mesh.ordered_vertices())>);
+    static_assert(range_has_size_v<decltype(mesh.faces())>);
+    static_assert(!random_access_range_v<decltype(mesh.faces())>);
+    static_assert(range_has_size_v<decltype(mesh.ordered_faces())>);
+    static_assert(random_access_range_v<decltype(mesh.ordered_faces())>);
+    static_assert(range_has_size_v<decltype(mesh.edges())>);
+    Vertex v = mesh.create_vertex();
+    static_assert(range_has_size_v<decltype(mesh.faces(v))>);
+    static_assert(!random_access_range_v<decltype(mesh.faces(v))>);
+    static_assert(!range_has_size_v<decltype(mesh.vertices(v))>);
+    static_assert(!random_access_range_v<decltype(mesh.vertices(v))>);
+    Edge e = nullptr;
+    static_assert(range_has_size_v<decltype(mesh.vertices(e))>);
+    static_assert(random_access_range_v<decltype(mesh.vertices(e))>);
+    dummy_use(map, v, e);
   }
 }

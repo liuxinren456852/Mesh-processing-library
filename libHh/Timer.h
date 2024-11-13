@@ -7,76 +7,84 @@
 #if 0
 {
   procedure() {
-    HH_TIMER(_proc);  // timing for entire procedure
+    HH_TIMER("_proc");  // Timing for entire procedure.
     if (something) {
-      HH_TIMER(__step1);  // sub-timings for substeps
+      HH_TIMER("__step1");  // Sub-timings for substeps.
       step1();
     }
     if (1) {
-      HH_TIMER(__step2);
+      HH_TIMER("__step2");
       step2();
     }
   }
   {
-    HH_TIMER(atimer2);
+    Timer timer("atimer2");
     statements;
-    HH_TIMER_END(atimer2);
+    timer.terminate();  // Shows timing up to here.
     more_statements;
   }
-  // getenv_int("SHOW_TIMES") == -1 : all -> noprint
-  // getenv_int("SHOW_TIMES") == 1  : all but noprint -> normal
-  Timer::set_show_times(-1);  // disable printing of all timers
+  // getenv_int("SHOW_TIMES") == -1 : all -> noprint.
+  // getenv_int("SHOW_TIMES") == 1  : all but noprint -> normal.
+  Timer::set_show_times(-1);  // Disable printing of all timers.
+  // getenv_bool("HH_HIDE_SUMMARIES") : if true, omit summary of timers.
 }
 #endif
 
 namespace hh {
 
-// Object that tracks elapsed time, per-thread computation, and per-process computation over its lifetime.
-// It reports effective multithreading factor (for parallelism defined inside its scope, not outside).
+// Object that tracks elapsed time and process computation (user+system) time over its lifetime.
+// It reports effective multithreading factor as a percentage, if detected.
 // Timing data associated with multiple Timers with the same name are accumulated and reported at program end.
-//  (This accumulation is not thread-safe; I assume that the timers are created outside multi-threading sections.)
+// (This accumulation is not threadsafe; we assume that any timers are created outside multithreading sections.)
+// We find that the computation time of the main thread is not all that useful.  Although in OpenMP, the main
+// thread participates in task work, this is not the case with hh::ThreadPoolIndexedTask, so the ratio
+// process_cpu_time / main_thread_cpu_time is not meaningful.
 class Timer : noncopyable {
  public:
-  enum class EMode { normal, diagnostic, abbrev, summary, possibly, noprint };
+  enum class EMode { normal, diagnostic, abbrev, summary, possibly, noprint, always };
   // normal:          showdf() every time
   // diagnostic:      showf() every time
   // abbrev:          showf() first time
   // summary:         only print in summary
   // possibly:        never print, do not keep stats (except if SHOW_TIMES)
   // noprint:         never print, do not keep stats
-  explicit Timer(string pname = "", EMode mode = EMode::noprint);  // timer is automatically started
+  // always:          showdf() every time even if SHOW_TIMES == -1
+  //
+  // If a name is given in the constructor, the timer is automatically started.
+  // Otherwise, mode is overridden to EMode::noprint and the timer is not started.
+  explicit Timer(string name_ = "", EMode mode = EMode::normal);
   ~Timer() { terminate(); }
   void terminate();  // finish the timer earlier than its end of scope
   void stop();
   void start();
-  double real() const;  // timer must be stopped
-  double cpu() const;   // timer must be stopped
+  // For the following, the timer must be stopped.
+  double real() const;         // Elapsed time, in seconds.
+  double cpu() const;          // Simulated "single-thread" "user + system" CPU time, in seconds.
+  double parallelism() const;  // Effective number of cores that multiply cpu() to obtain the total process CPU time.
   //
-  static int show_times() { return _s_show; }
+  static int get_show_times();
   static void set_show_times(int val) { _s_show = val; }
 
  private:
   string _name;
   EMode _mode;
-  bool _started;
-  bool _ever_started;
-  double _thread_cpu_time;   // thread  user + system time
-  double _process_cpu_time;  // process user + system time
-  int64_t _real_counter;
+  bool _started{false};
+  bool _ever_started{false};
+  // double _thread_cpu_time{0.}; // Main thread "user + system" time, in seconds.
+  double _process_cpu_time{0.};   // Process "user + system" time, in seconds.
+  int64_t _real_time_counter{0};  // Elapsed time, often in units of 100 ns.
   static int _s_show;
   friend class Timers;
-  void zero();
+  void update_counters(int delta_sign);
 };
 
-#define HH_TIMER_VAR(id) Timer_##id  // variable name used internally
-#define HH_TIMER_AUX(id, mode) hh::Timer HH_TIMER_VAR(id)(#id, mode)
-#define HH_TIMER(id) HH_TIMER_AUX(id, hh::Timer::EMode::normal)
-#define HH_CTIMER(id, cond) HH_TIMER_AUX(id, (cond) ? hh::Timer::EMode::normal : hh::Timer::EMode::noprint)
-#define HH_DTIMER(id) HH_TIMER_AUX(id, hh::Timer::EMode::diagnostic)
-#define HH_ATIMER(id) HH_TIMER_AUX(id, hh::Timer::EMode::abbrev)
-#define HH_STIMER(id) HH_TIMER_AUX(id, hh::Timer::EMode::summary)
-#define HH_PTIMER(id) HH_TIMER_AUX(id, hh::Timer::EMode::possibly)
-#define HH_TIMER_END(id) HH_TIMER_VAR(id).terminate()  // terminate a HH_TIMER(id) earlier than its scope
+#define HH_TIMER_AUX(name, mode) hh::Timer HH_UNIQUE_ID(timer)(name, mode)
+#define HH_TIMER(name) HH_TIMER_AUX(name, hh::Timer::EMode::normal)
+#define HH_CTIMER(name, cond) HH_TIMER_AUX(name, (cond) ? hh::Timer::EMode::normal : hh::Timer::EMode::noprint)
+#define HH_DTIMER(name) HH_TIMER_AUX(name, hh::Timer::EMode::diagnostic)
+#define HH_ATIMER(name) HH_TIMER_AUX(name, hh::Timer::EMode::abbrev)
+#define HH_STIMER(name) HH_TIMER_AUX(name, hh::Timer::EMode::summary)
+#define HH_PTIMER(name) HH_TIMER_AUX(name, hh::Timer::EMode::possibly)
 
 }  // namespace hh
 

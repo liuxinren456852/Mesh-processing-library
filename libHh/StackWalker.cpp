@@ -15,7 +15,7 @@
  *                       (should also be enough)
  *                     - Changed to compile correctly with the PSDK of VC7.0
  *                       (GetFileVersionInfoSizeA and GetFileVersionInfoA is wrongly defined:
- *                        it uses LPSTR instead of LPCSTR as first paremeter)
+ *                        it uses LPSTR instead of LPCSTR as first parameter)
  *                     - Added declarations to support VC5/6 without using 'dbghelp.h'
  *                     - Added a 'pUserData' member to the ShowCallstack function and the
  *                       PReadProcessMemoryRoutine declaration (to pass some user-defined data,
@@ -74,6 +74,13 @@ void StackWalker_dummy_function_to_avoid_linkage_warnings() {}
 #include <mutex>
 
 #include "Hh.h"
+
+#if defined(__clang__)  // For PEDANTIC=1.
+#pragma clang diagnostic ignored "-Wold-style-cast"
+#pragma clang diagnostic ignored "-Wcast-function-type"
+#pragma clang diagnostic ignored "-Wzero-as-null-pointer-constant"
+#pragma clang diagnostic ignored "-Wextra-semi-stmt"
+#endif
 
 HH_REFERENCE_LIB("version.lib");   // for "VerQueryValue"
 HH_REFERENCE_LIB("advapi32.lib");  // for GetUserName() here and in StackWalker
@@ -527,7 +534,7 @@ class StackWalkerInternal {
   }  // GetModuleListTH32
 
   // **************************************** PSAPI ************************
-  typedef struct _MODULEINFO {
+  typedef struct MODULEINFO_ {
     LPVOID lpBaseOfDll;
     DWORD SizeOfImage;
     LPVOID EntryPoint;
@@ -623,7 +630,7 @@ class StackWalkerInternal {
     }
     ULONGLONG fileVersion = 0;
     if ((m_parent != NULL) && (szImg != NULL)) {
-      // try to retrive the file-version:
+      // try to retrieve the file-version:
       if ((this->m_parent->m_options & StackWalker::RetrieveFileVersion) != 0) {
         VS_FIXEDFILEINFO* fInfo = NULL;
         DWORD dwHandle;
@@ -647,7 +654,7 @@ class StackWalkerInternal {
         }
       }
 
-      // Retrive some additional-infos about the module
+      // Retrieve some additional-infos about the module
       IMAGEHLP_MODULE64_V2 Module;
       const char* szSymType = "-unknown-";
       if (this->GetModuleInfo(hProcess, baseAddr, &Module) != FALSE) {
@@ -680,7 +687,7 @@ class StackWalkerInternal {
     return GetModuleListPSAPI(hProcess);
   }
 
-  BOOL GetModuleInfo(HANDLE hProcess, DWORD64 baseAddr, IMAGEHLP_MODULE64_V2* pModuleInfo) {
+  BOOL GetModuleInfo(HANDLE hProcess, DWORD64 baseAddr, IMAGEHLP_MODULE64_V2* pModuleInfo) const {
     if (this->pSGMI == NULL) {
       SetLastError(ERROR_DLL_INIT_FAILED);
       return FALSE;
@@ -696,7 +703,7 @@ class StackWalkerInternal {
     //      if (GetLastError() != ERROR_INVALID_PARAMETER)
     //        return FALSE;
     //    }
-    // could not retrive the bigger structure, try with the smaller one (as defined in VC7.1)...
+    // could not retrieve the bigger structure, try with the smaller one (as defined in VC7.1)...
     pModuleInfo->SizeOfStruct = sizeof(IMAGEHLP_MODULE64_V2);
     void* pData = malloc(4096);  // reserve enough memory, so the bug in v6.3.5.1 does not lead to memory-overwrites...
     if (pData == NULL) {
@@ -853,12 +860,12 @@ static LPVOID s_readMemoryFunction_UserData = NULL;
 
 #if defined(_MSC_VER)
 #pragma warning(disable : 4740)  // flow in or out of inline asm code suppresses global optimization
+#pragma warning(disable : 4127)  // conditional expression is constant
 #endif
 
 BOOL StackWalker::ShowCallstack(HANDLE hThread, const CONTEXT* context, PReadProcessMemoryRoutine readMemoryFunction,
                                 LPVOID pUserData) {
   CONTEXT c;
-  ;
   CallstackEntry csEntry;
   IMAGEHLP_SYMBOL64* pSym = NULL;
   StackWalkerInternal::IMAGEHLP_MODULE64_V2 Module;
@@ -878,7 +885,6 @@ BOOL StackWalker::ShowCallstack(HANDLE hThread, const CONTEXT* context, PReadPro
   if (context == NULL) {
     // If no context is provided, capture the context
     if (hThread == GetCurrentThread()) {
-#pragma warning(disable : 4127)  // conditional expression is constant
       GET_CURRENT_CONTEXT(c, USED_CONTEXT_FLAGS);
     } else {
       SuspendThread(hThread);
@@ -947,7 +953,7 @@ BOOL StackWalker::ShowCallstack(HANDLE hThread, const CONTEXT* context, PReadPro
       // if this returns ERROR_INVALID_ADDRESS (487) or ERROR_NOACCESS (998), you can
       // assume that either you are done, or that the stack is so hosed that the next
       // deeper frame could not be found.
-      // CONTEXT need not to be suplied if imageTyp is IMAGE_FILE_MACHINE_I386!
+      // CONTEXT need not to be supplied if imageTyp is IMAGE_FILE_MACHINE_I386!
       if (!this->m_sw->pSW(imageType, this->m_hProcess, hThread, &s, &c, myReadProcMem, this->m_sw->pSFTA,
                            this->m_sw->pSGMB, NULL)) {
         this->OnDbgHelpErr("StackWalk64", GetLastError(), s.AddrPC.Offset);
@@ -1099,6 +1105,8 @@ void StackWalker::OnCallstackEntry(CallstackEntryType eType, CallstackEntry& ent
       if (!verbose && strstr(entry.name, "__scrt_common_main_seh")) return;           // >=VS2015
       if (!verbose && strstr(entry.name, "crt\\vcstartup")) return;                   // VS2019
       // _snprintf_s(buffer, STACKWALK_MAX_NAMELEN, "%s (%d): %s\n", entry.lineFileName, entry.lineNumber, entry.name);
+      for (char* s = entry.lineFileName; *s; s++)
+        if (*s == '\\') *s = '/';
       _snprintf_s(buffer, STACKWALK_MAX_NAMELEN, "%s(%lu): %s\n", entry.lineFileName, entry.lineNumber, entry.name);
     }
     OnOutput(buffer);

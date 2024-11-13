@@ -13,11 +13,11 @@
 
 #if 0
 #include "libHh/Timer.h"
-#define HH_GRIDOP_TIMER(x) HH_TIMER(x)
+#define HH_GRIDOP_TIMER(name) HH_TIMER(name)
 #endif
 
 #if !defined(HH_GRIDOP_TIMER)
-#define HH_GRIDOP_TIMER(x)
+#define HH_GRIDOP_TIMER(name)
 #endif
 
 namespace hh {
@@ -109,14 +109,14 @@ Grid<D, Pixel> convolve_d(CGridView<D, Pixel> grid, int d, CArrayView<float> ker
 //----------------------------------------------------------------------------
 
 template <int COL_D, int D, typename T> CStridedArrayView<T> grid_column(CGridView<D, T> grid, const Vec<int, D>& u0) {
-  static_assert(COL_D >= 0 && COL_D < D, "");
+  static_assert(COL_D >= 0 && COL_D < D);
   ASSERTX(grid.ok(u0));
   ASSERTX(u0[COL_D] == 0);
   return CStridedArrayView<T>(&grid[u0], grid.dim(COL_D), grid_stride(grid.dims(), COL_D));
 }
 
 template <int COL_D, int D, typename T> StridedArrayView<T> grid_column(GridView<D, T> grid, const Vec<int, D>& u0) {
-  static_assert(COL_D >= 0 && COL_D < D, "");
+  static_assert(COL_D >= 0 && COL_D < D);
   ASSERTX(grid.ok(u0));
   ASSERTX(u0[COL_D] == 0);
   return StridedArrayView<T>(&grid[u0], grid.dim(COL_D), grid_stride(grid.dims(), COL_D));
@@ -157,33 +157,32 @@ Grid<D, T> crop(CGridView<D, T> grid, const Vec<int, D>& dL, const Vec<int, D>& 
       if (0) {
         newgrid = grid.slice(dL[0], grid.dim(0) - dU[0]);
       } else {
-        parallel_for_each(
-            range(newgrid.dim(0)), [&](const int d0) { newgrid[d0].assign(grid[d0 + dL[0]]); },
-            product(newgrid.dims().template tail<D - 1>()));
+        const auto cycles_per_elem = uint64_t(product(newgrid.dims().template tail<D - 1>()));
+        parallel_for_each({cycles_per_elem}, range(newgrid.dim(0)), [&](const int d0) {  //
+          newgrid[d0].assign(grid[d0 + dL[0]]);
+        });
       }
     } else {
-      parallel_for_coords(
-          newdims,
-          [&](const Vec<int, D>& u) {
-            newgrid[u] = grid[u + dL];  // OPT:crop; almost as fast as above
-          },
-          20);
+      parallel_for_coords({20}, newdims, [&](const Vec<int, D>& u) {
+        newgrid[u] = grid[u + dL];  // OPT:crop; almost as fast as above
+      });
     }
-  } else {  // slower path
-    parallel_for_coords(
-        newdims, [&](const Vec<int, D>& u) { newgrid[u] = grid.inside(u + dL, bndrules, bordervalue); }, 20);
+  } else {
+    // Slower path.
+    parallel_for_coords({20}, newdims, [&](const Vec<int, D>& u) {  //
+      newgrid[u] = grid.inside(u + dL, bndrules, bordervalue);
+    });
   }
   return newgrid;
 }
 
 template <int D, typename U, typename T>
 Grid<D, T> assemble(CGridView<D, U> grids, const T& background, const Vec<Alignment, D>& align) {
-  static_assert(std::is_base_of<CGridView<D, T>, U>::value, "");
+  static_assert(std::is_base_of_v<CGridView<D, T>, U>);
   Vec<Array<int>, D> max_sizes;  // max size of each slice [d = 0 .. D - 1][0 .. grids.dim(d)]
   for_int(d, D) max_sizes[d].init(grids.dim(d), 0);
-  for (const auto& u : range(grids.dims())) {
+  for (const auto& u : range(grids.dims()))
     for_int(d, D) max_sizes[d][u[d]] = max(max_sizes[d][u[d]], grids[u].dim(d));
-  }
   Vec<Array<int>, D> locs;  // start locations on each axis; [d = 0 .. D - 1][0 .. grids.dim(d)]
   for_int(d, D) {
     int tot = 0;
@@ -221,7 +220,7 @@ Grid<D, T> assemble(CGridView<D, U> grids, const T& background, const Vec<Alignm
         default: assertnever("");
       }
     }
-    for (Vec<int, D> u : range(agrid.dims())) grid[offset + u] = agrid[u];
+    for (const Vec<int, D> u : range(agrid.dims())) grid[offset + u] = agrid[u];
   });
   return grid;
 }
@@ -236,79 +235,61 @@ inline bool env_image_linear_filter() {
 }
 
 template <int D> void convert(CGridView<D, Pixel> gridu, GridView<D, Vector4> gridf) {
-  HH_GRIDOP_TIMER(__convert1);
+  HH_GRIDOP_TIMER("__convert1");
   assertx(same_size(gridu, gridf));
-  parallel_for_each(
-      range(gridu.size()),
-      [&](const size_t i) {
-        Vector4 v = Vector4(gridu.flat(i));
-        if (env_image_linear_filter()) v = square(v);  // assumes gamma = 2.0 rather than SRGB 2.2
-        gridf.flat(i) = v;
-      },
-      4);
+  parallel_for_each({4}, range(gridu.size()), [&](const size_t i) {
+    Vector4 v(gridu.flat(i));
+    if (env_image_linear_filter()) v = square(v);  // assumes gamma = 2.0 rather than SRGB 2.2
+    gridf.flat(i) = v;
+  });
 }
 
 template <int D> void convert(CGridView<D, Vector4> gridf, GridView<D, Pixel> gridu) {
-  HH_GRIDOP_TIMER(__convert2);
+  HH_GRIDOP_TIMER("__convert2");
   assertx(same_size(gridf, gridu));
-  parallel_for_each(
-      range(gridf.size()),
-      [&](const size_t i) {
-        Vector4 v = gridf.flat(i);
-        if (env_image_linear_filter()) v = sqrt(v);  // assumes gamma = 2.0 rather than SRGB 2.2
-        gridu.flat(i) = v.pixel();
-      },
-      4);
+  parallel_for_each({4}, range(gridf.size()), [&](const size_t i) {
+    Vector4 v = gridf.flat(i);
+    if (env_image_linear_filter()) v = sqrt(v);  // assumes gamma = 2.0 rather than SRGB 2.2
+    gridu.flat(i) = v.pixel();
+  });
 }
 
 template <int D> void convert(CGridView<D, uint8_t> gridu, GridView<D, float> gridf) {
   assertx(same_size(gridu, gridf));
-  parallel_for_each(
-      range(gridu.size()),
-      [&](const size_t i) {
-        float v = static_cast<float>(gridu.flat(i));
-        if (env_image_linear_filter()) v = square(v);
-        gridf.flat(i) = v;
-      },
-      1);
+  parallel_for_each({1}, range(gridu.size()), [&](const size_t i) {
+    float v = float(gridu.flat(i));
+    if (env_image_linear_filter()) v = square(v);
+    gridf.flat(i) = v;
+  });
 }
 
 template <int D> void convert(CGridView<D, float> gridf, GridView<D, uint8_t> gridu) {
   assertx(same_size(gridf, gridu));
-  parallel_for_each(
-      range(gridf.size()),
-      [&](const size_t i) {
-        float v = gridf.flat(i);
-        if (env_image_linear_filter()) v = sqrt(v);
-        gridu.flat(i) = clamp_to_uint8(static_cast<int>(v));
-      },
-      1);
+  parallel_for_each({1}, range(gridf.size()), [&](const size_t i) {
+    float v = gridf.flat(i);
+    if (env_image_linear_filter()) v = sqrt(v);
+    gridu.flat(i) = clamp_to_uint8(int(v));
+  });
 }
 
 template <int D> void convert(CGridView<D, Vec2<uint8_t>> gridu, GridView<D, Vector4> gridf) {
   assertx(same_size(gridu, gridf));
-  parallel_for_each(
-      range(gridu.size()),
-      [&](const size_t i) {
-        const auto& uv = gridu.flat(i);
-        Vector4 v = Vector4(Pixel(uv[0], uv[1], 0, 0));
-        if (env_image_linear_filter()) v = square(v);
-        gridf.flat(i) = v;
-      },
-      4);
+  parallel_for_each({4}, range(gridu.size()), [&](const size_t i) {
+    const auto& uv = gridu.flat(i);
+    Vector4 v(Pixel(uv[0], uv[1], 0, 0));
+    if (env_image_linear_filter()) v = square(v);
+    gridf.flat(i) = v;
+  });
 }
 
 template <int D> void convert(CGridView<D, Vector4> gridf, GridView<D, Vec2<uint8_t>> gridu) {
   assertx(same_size(gridf, gridu));
-  parallel_for_each(
-      range(gridf.size()),
-      [&](const size_t i) {
-        Vector4 v = gridf.flat(i);
-        if (env_image_linear_filter()) v = sqrt(v);
-        Pixel p = v.pixel();
-        gridu.flat(i) = V(p[0], p[1]);
-      },
-      4);
+  parallel_for_each({4}, range(gridf.size()), [&](const size_t i) {
+    Vector4 v = gridf.flat(i);
+    if (env_image_linear_filter()) v = sqrt(v);
+    Pixel p = v.pixel();
+    gridu.flat(i) = V(p[0], p[1]);
+  });
 }
 
 //----------------------------------------------------------------------------
@@ -317,11 +298,11 @@ namespace details {
 
 // Perform the inverse convolution preprocess for a single dimension d.
 template <int D, typename T> void inverse_convolution_d(GridView<D, T> grid, const FilterBnd& filterb, int d) {
-  HH_GRIDOP_TIMER(__inv_convol);
+  HH_GRIDOP_TIMER("__inv_convol");
   const LUfactorization& lu = filterb.lu_factorization();
   const bool lastspecial = lu.Llastrow.num() > 0;
   const Vec<int, D>& dims = grid.dims();
-  // TODO: always process a coherent swath of the last dimension together for better cache performance.
+  // TODO: Always process a coherent swath of the last dimension together for better cache performance.
   const int cx = grid.dim(d);
   if (cx == 1) return;  // inverse convolution is identity
   const size_t stride = grid_stride(dims, d);
@@ -333,7 +314,7 @@ template <int D, typename T> void inverse_convolution_d(GridView<D, T> grid, con
     if (0) rowv[0] = rowv[0];                               // just copy first element
     for_intL(x, 1, min(cx - lastspecial, lu.Llower.num()))  // special initial elements
         rowv[x] = rowv[x] - lu.Llower[x] * rowv[x - 1];
-    const float cfast = lu.Llower[lu.Llower.num() - 1];
+    const float cfast = lu.Llower.last();
     if (lu.Llower.num() < cx - lastspecial) {
       T vprev = rowv[lu.Llower.num() - 1];
       for_intL(x, lu.Llower.num(), cx - lastspecial) {
@@ -354,13 +335,12 @@ template <int D, typename T> void inverse_convolution_d(GridView<D, T> grid, con
                        (rowv[cx - 2] - lu.UlastcolPen[min(cx - 1, lu.UlastcolPen.num() - 1)] * lastv);
       }
     }
-    const float cfast1 = lu.Uidiag[lu.Uidiag.num() - 1], cfast2 = lu.Uupper;
+    const float cfast1 = lu.Uidiag.last(), cfast2 = lu.Uupper;
     const int low = lu.Uidiag.num() - 1;
     if (cx - 2 - lastspecial >= low) {
       T vprev = rowv[cx - 2 - lastspecial + 1];
-      for (int x = cx - 2 - lastspecial; x >= low; --x) {
+      for (int x = cx - 2 - lastspecial; x >= low; --x)
         rowv[x] = vprev = cfast1 * (rowv[x] - cfast2 * vprev);  // OPT:ic2
-      }
     }
     for (int x = min(lu.Uidiag.num() - 2, cx - 2 - lastspecial); x >= 0; --x) {  // special initial elements
       rowv[x] = lu.Uidiag[x] * (rowv[x] - lu.Uupper * rowv[x + 1]);
@@ -372,7 +352,7 @@ template <int D, typename T> void inverse_convolution_d(GridView<D, T> grid, con
 template <int D, typename T>
 Grid<D, T> evaluate_kernel_d(CGridView<D, T> grid, int d, CArrayView<int> ar_pixelindex0,
                              CMatrixView<float> mat_weights, Bndrule bndrule, const T* bordervalue) {
-  HH_GRIDOP_TIMER(__evaluate);
+  HH_GRIDOP_TIMER("__evaluate");
   const Vec<int, D>& dims = grid.dims();
   int cx = dims[d];
   int nx = ar_pixelindex0.num();
@@ -388,7 +368,7 @@ Grid<D, T> evaluate_kernel_d(CGridView<D, T> grid, int d, CArrayView<int> ar_pix
   int ioutmax = nx;
   while (ioutmax > ioutmin && ar_pixelindex0[ioutmax - 1] + nk > cx) --ioutmax;
   assertx(0 <= ioutmin && ioutmin <= ioutmax && ioutmax <= nx);
-  auto func = [&](const Vec<int, D>& u) {
+  const auto func = [&](const Vec<int, D>& u) {
     int x = u[d];
     T v;
     my_zero(v);
@@ -399,17 +379,19 @@ Grid<D, T> evaluate_kernel_d(CGridView<D, T> grid, int d, CArrayView<int> ar_pix
     }
     ngrid[u] = v;
   };
-  auto func_interior = [&](const Vec<int, D>& u) {
+  const auto func_interior = [&](const Vec<int, D>& u) {
     int x = u[d];
     const Vec<int, D> u0 = u.with(d, ar_pixelindex0[x]);
     size_t i0 = ravel_index(dims, u0);
     T v;
     my_zero(v);
-    for_int(k, nk) v += mat_weights[x][k] * grid.flat(i0 + k * stride);
+    const float* mat_weights_x = mat_weights[x].data();
+    const T* grid_i0 = grid.data() + i0;
+    for_int(k, nk) v += mat_weights_x[k] * grid_i0[k * stride];
     ngrid[u] = v;
   };
-  // TODO: use 2D tiling approach so that both grid and mat_weights fit in cache for wide grids.
-  if (ngrid.size() * 20 < k_omp_thresh) {
+  // TODO: Use 2D tiling approach so that both grid and mat_weights fit in cache for wide grids.
+  if (ngrid.size() * 20 < k_parallel_thresh) {
     for_coords(ndims, func);
   } else if (0) {
     parallel_for_coords(ndims, func);  // not so slow
@@ -456,7 +438,7 @@ Grid<D, T> scale_d(CGridView<D, T> grid, int d, int nx, const FilterBnd& filterb
 template <int D, typename T>
 Grid<D, T> scale_i(CGridView<D, T> grid, const Vec<int, D>& ndims, const Vec<FilterBnd, D>& filterbs,
                    const T* bordervalue, Grid<D, T>&& gr, bool primal) {
-  HH_GRIDOP_TIMER(__scale);
+  HH_GRIDOP_TIMER("__scale");
   if (any_of(filterbs, [](const FilterBnd& fb) { return fb.bndrule() == Bndrule::border; })) assertx(bordervalue);
   const Vec<int, D>& dims = grid.dims();
   int npreprocess = 0;
@@ -470,7 +452,7 @@ Grid<D, T> scale_i(CGridView<D, T> grid, const Vec<int, D>& ndims, const Vec<Fil
   }
   assertx(njustspline == 0 || njustspline == D);
   // Note: IMAGE_EXPAND_VALUE_RANGE would be 2. to get a range [-.5, 1.5].
-  // I found empirically in ~/prevproj/2011/vtfilter/Notes.txt that the lower factor of 1.5 gives best results.
+  // The lower factor of 1.5 was found empirically to yield the best results; see ~/prevproj/2011/vtfilter/Notes.txt.
   static const float k_expand_value_range = getenv_float("IMAGE_EXPAND_VALUE_RANGE", 1.5f, true);
   float expand_value_range = npreprocess ? 1.f / assertx(k_expand_value_range) : k_expand_value_range;
   if (npreprocess) {
@@ -514,12 +496,12 @@ Grid<D, T> scale_i(CGridView<D, T> grid, const Vec<int, D>& ndims, const Vec<Fil
     float scaling;
   };
   Array<Tup> ar;
-  for_int(d, D) ar.push(Tup{d, static_cast<float>(ndims[d]) / assertx(dims[d])});
+  for_int(d, D) ar.push(Tup{d, float(ndims[d]) / assertx(dims[d])});
   // Sort dimensions for quickest domain size reduction (or slowest domain size increase).
   // However, operating on last dimension is most efficient due to memory layout.
   // Therefore, if identical downsampling on multiple dimensions, we prefer to do last dimension first.
   // And,       if identical upsampling   on multiple dimensions, we prefer to do last dimension last.
-  sort(ar, [](const Tup& t1, const Tup& t2) {
+  const auto by_quickest_size_reduction = [](const Tup& t1, const Tup& t2) {
     Vec2<Tup> tups(t1, t2);
     for (Tup& t : tups) {
       if (1 && t.dim == D - 1) {
@@ -529,7 +511,8 @@ Grid<D, T> scale_i(CGridView<D, T> grid, const Vec<int, D>& ndims, const Vec<Fil
       }
     }
     return tups[0].scaling < tups[1].scaling;
-  });
+  };
+  sort(ar, by_quickest_size_reduction);
   CGridView<D, T> gridref(grid);  // (becomes gr after first iteration)
   for (const Tup& tup : ar) {
     int d = tup.dim;  // SHOW(d);
@@ -537,9 +520,8 @@ Grid<D, T> scale_i(CGridView<D, T> grid, const Vec<int, D>& ndims, const Vec<Fil
     gridref.reinit(gr);
   }
   assertx(gridref.data() == gr.data());
-  if (njustspline) {
+  if (njustspline)
     for (T& e : gr) e = T{.5f} + (e - T{.5f}) * expand_value_range;  // expand rage
-  }
   return std::move(gr);
 }
 
@@ -583,12 +565,12 @@ template <int D, typename T, int DD>
 void scale_filter_nearest_aux(Specialize<DD>, CGridView<D, T> grid, GridView<D, T> ngrid,
                               const Vec<Array<int>, D>& maps) {
   assertx(D != 2 && D != 3);  // specialized below
-  auto func = [&](const Vec<int, D>& u) {
+  const auto func = [&](const Vec<int, D>& u) {
     Vec<int, D> uu;
     for_int(d, D) uu[d] = maps[d][u[d]];
     ngrid[u] = grid[uu];
   };
-  parallel_for_coords(ngrid.dims(), func, 20);
+  parallel_for_coords({20}, ngrid.dims(), func);
 }
 
 template <int D, typename T>
@@ -597,49 +579,40 @@ void scale_filter_nearest_aux(Specialize<1>, CGridView<D, T> grid, GridView<D, T
   ASSERTX(!maps[0].num());
   const Vec<int, D> dims = grid.dims();
   const Vec<int, D> ndims = ngrid.dims();
-  parallel_for_each(
-      range(ndims[0]),
-      [&](const int i) {
-        int ii = static_cast<int>((i + .5f) / ndims[0] * dims[0] - 1e-4f);
-        ngrid(i) = grid(ii);
-      },
-      3);
+  parallel_for_each({3}, range(ndims[0]), [&](const int i) {
+    int ii = int((i + .5f) / ndims[0] * dims[0] - 1e-4f);
+    ngrid(i) = grid(ii);
+  });
 }
 
 template <int D, typename T>
 void scale_filter_nearest_aux(Specialize<2>, CGridView<D, T> grid, GridView<D, T> ngrid,
                               const Vec<Array<int>, D>& maps) {
   const Vec<int, D> ndims = ngrid.dims();
-  parallel_for_each(
-      range(ndims[0]),
-      [&](const int y) {
-        int yy = maps[0][y];
-        for_int(x, ndims[1]) ngrid(y, x) = grid(yy, maps[1][x]);
-      },
-      ndims[1] * 3);
+  parallel_for_each({uint64_t(ndims[1]) * 3}, range(ndims[0]), [&](const int y) {
+    int yy = maps[0][y];
+    for_int(x, ndims[1]) ngrid(y, x) = grid(yy, maps[1][x]);
+  });
 }
 
 template <int D, typename T>
 void scale_filter_nearest_aux(Specialize<3>, CGridView<D, T> grid, GridView<D, T> ngrid,
                               const Vec<Array<int>, D>& maps) {
   const Vec<int, D> ndims = ngrid.dims();
-  parallel_for_each(
-      range(ndims[0]),
-      [&](const int z) {
-        int zz = maps[0][z];
-        for_int(y, ndims[1]) {
-          int yy = maps[1][y];
-          for_int(x, ndims[2]) ngrid(z, y, x) = grid(zz, yy, maps[2][x]);
-        }
-      },
-      ndims[1] * ndims[2] * 3);
+  parallel_for_each({uint64_t(ndims[1] * ndims[2]) * 3}, range(ndims[0]), [&](const int z) {
+    int zz = maps[0][z];
+    for_int(y, ndims[1]) {
+      int yy = maps[1][y];
+      for_int(x, ndims[2]) ngrid(z, y, x) = grid(zz, yy, maps[2][x]);
+    }
+  });
 }
 
 }  // namespace details
 
 template <int D, typename T>
 Grid<D, T> scale_filter_nearest(CGridView<D, T> grid, const Vec<int, D>& ndims, Grid<D, T>&& gr) {
-  HH_GRIDOP_TIMER(__scale_filter_nearest);
+  HH_GRIDOP_TIMER("__scale_filter_nearest");
   if (!product(ndims)) {
     gr.init(ndims);
     return std::move(gr);
@@ -656,7 +629,7 @@ Grid<D, T> scale_filter_nearest(CGridView<D, T> grid, const Vec<int, D>& ndims, 
       Array<int>& map = maps[d];
       map.init(ndims[d]);
       for_int(i, ndims[d]) {
-        map[i] = static_cast<int>((i + .5f) / ndims[d] * dims[d] - 1e-4f);
+        map[i] = int((i + .5f) / ndims[d] * dims[d] - 1e-4f);
         ASSERTX(map[i] >= 0 && map[i] < dims[d]);
       }
     }
@@ -674,9 +647,9 @@ T sample_grid(CGridView<D, T> g, const Vec<float, D>& p, const Vec<FilterBnd, D>
     assertx(!filterbs[d].filter().has_inv_convolution());
     KernelFunc func = assertx(filterbs[d].filter().func());
     double kernel_radius = filterbs[d].filter().radius();
-    uL[d] = static_cast<int>(floor(p[d] - kernel_radius));
-    uU[d] = static_cast<int>(ceil(p[d] + kernel_radius)) + 1;
-    for_intL(i, uL[d], uU[d]) matw[d].push(static_cast<float>(func(static_cast<float>(i) - p[d])));
+    uL[d] = int(floor(p[d] - kernel_radius));
+    uU[d] = int(ceil(p[d] + kernel_radius)) + 1;
+    for_intL(i, uL[d], uU[d]) matw[d].push(float(func(float(i) - p[d])));
   }
   Vec<Bndrule, D> bndrules;
   for_int(d, D) bndrules[d] = filterbs[d].bndrule();
@@ -689,7 +662,7 @@ T sample_grid(CGridView<D, T> g, const Vec<float, D>& p, const Vec<FilterBnd, D>
     sumw += w;
     val += w * g.inside(u, bndrules, bordervalue);
   }
-  return val / assertx(static_cast<float>(sumw));
+  return val / assertx(float(sumw));
 }
 
 template <int D, typename T>
@@ -702,7 +675,7 @@ T sample_domain(CGridView<D, T> g, const Vec<float, D>& p, const Vec<FilterBnd, 
 template <int D, bool parallel>
 Grid<D, Pixel> convolve_d(CGridView<D, Pixel> grid, int d, CArrayView<float> kernel, Bndrule bndrule,
                           const Pixel* bordervalue) {
-  // HH_TIMER(__convolve_d);
+  // HH_TIMER("__convolve_d");
   if (bndrule == Bndrule::border) assertx(bordervalue);
   const Vec<int, D>& dims = grid.dims();
   const int nx = dims[d];
@@ -714,7 +687,7 @@ Grid<D, Pixel> convolve_d(CGridView<D, Pixel> grid, int d, CArrayView<float> ker
   const int ishift = 16, fac = 1 << ishift, fach = 1 << (ishift - 1);
   Array<int> kerneli;
   {
-    kerneli = convert<int>(kernel * static_cast<float>(fac) + .5f);  // (all >= 0.f so no need for floor())
+    kerneli = convert<int>(kernel * float(fac) + .5f);  // (all >= 0.f so no need for floor())
     int excess = narrow_cast<int>(sum(kerneli) - fac);
     assertx(abs(excess) <= nk);  // sanity check
     kerneli[r] -= excess;        // adjust center weight to make the quantized sum correct
@@ -723,17 +696,18 @@ Grid<D, Pixel> convolve_d(CGridView<D, Pixel> grid, int d, CArrayView<float> ker
   int ioutmin = min(r, nx);
   int ioutmax = max(ioutmin, nx - r);
   assertx(0 <= ioutmin && ioutmin <= ioutmax && ioutmax <= nx);
-  auto func = [&](const Vec<int, D>& u) {
+  const auto func = [&](const Vec<int, D>& u) {
     int x = u[d];
     Vector4i v{0};
     for_int(k, nk) {
       int ii = x - r + k;
+      // NOLINTNEXTLINE(clang-analyzer-core.NullDereference)
       const Pixel& value = map_boundaryrule_1D(ii, nx, bndrule) ? grid[u.with(d, ii)] : *bordervalue;
       v += kerneli[k] * Vector4i(value);
     }
     ngrid[u] = ((v + fach) >> ishift).pixel();
   };
-  auto func_interior = [&](const Vec<int, D>& u) {
+  const auto func_interior = [&](const Vec<int, D>& u) {
     int x = u[d];
     const Vec<int, D> u0 = u.with(d, x - r);
     size_t i0 = ravel_index(dims, u0);
@@ -741,7 +715,7 @@ Grid<D, Pixel> convolve_d(CGridView<D, Pixel> grid, int d, CArrayView<float> ker
     for_int(k, nk) v += kerneli[k] * Vector4i(grid.flat(i0 + k * stride));  // OPT:blur
     ngrid[u] = ((v + fach) >> ishift).pixel();
   };
-  // TODO: use 2D tiling approach so that both grid and kernel fit in cache for wide grids.
+  // TODO: Use 2D tiling approach so that both grid and kernel fit in cache for wide grids.
   if (0) {
     for_coords(dims, func);
   } else {
@@ -749,7 +723,7 @@ Grid<D, Pixel> convolve_d(CGridView<D, Pixel> grid, int d, CArrayView<float> ker
     // Filterimage ~/data/image/lake.png -tile 10 10 -info -blur 1 -info | imgv
     // Filterimage ~/data/image/lake.png -tile 2 2 -info `perl -e 'binmode(STDOUT); for (1..10) { print " -blur 1"; }'` -info | imgv
     for_coordsL(ntimes<D>(0).with(d, 0), dims.with(d, ioutmin), func);
-    if (!parallel || ngrid.size() * nk * 5 < k_omp_thresh)
+    if (!parallel || ngrid.size() * nk * 5 < k_parallel_thresh)
       for_coordsL(ntimes<D>(0).with(d, ioutmin), dims.with(d, ioutmax), func_interior);
     else
       parallel_for_coordsL(ntimes<D>(0).with(d, ioutmin), dims.with(d, ioutmax), func_interior);

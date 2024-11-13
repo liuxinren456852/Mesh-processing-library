@@ -10,17 +10,11 @@ namespace hh {
 
 HH_ALLOCATE_POOL(Polygon);
 
-void Polygon::get_bbox(Bbox& bbox) const {
-  assertx(num() >= 1);
-  bbox.clear();
-  for_int(i, num()) bbox.union_with((*this)[i]);
-}
-
 Vector Polygon::get_normal_dir() const {
   const auto& self = *this;
   if (num() == 3) return cross(self[0], self[1], self[2]);  // short-cut
   assertx(num() >= 3);
-  Vector nor(0.f, 0.f, 0.f);
+  Vector nor{};
   for_intL(i, 1, num() - 1) nor += cross(self[0], self[i], self[i + 1]);
   return nor;
 }
@@ -30,7 +24,7 @@ Vector Polygon::get_normal() const { return ok_normalized(get_normal_dir()); }
 float Polygon::get_planec(const Vector& pnor) const {
   assertx(num() >= 3);
   float sumd = 0.f;
-  for_int(i, num()) sumd += pvdot((*this)[i], pnor);
+  for_int(i, num()) sumd += dot((*this)[i], pnor);
   return sumd / num();
 }
 
@@ -38,7 +32,7 @@ float Polygon::get_tolerance(const Vector& pnor, float d) const {
   assertx(num() >= 3);
   float tol = 0.f;
   for_int(i, num()) {
-    float od = abs(pvdot((*this)[i], pnor) - d);
+    float od = abs(dot((*this)[i], pnor) - d);
     if (od > tol) tol = od;
   }
   return tol;
@@ -55,94 +49,98 @@ bool Polygon::intersect_hyperplane(const Point& hp, const Vector& hn) {
   assertx(num() >= 3);
   auto& self = *this;
   PArray<float, 10> sa(num());
-  int nin = 0;
+  int num_intersections = 0;
   for_int(i, num()) {
-    sa[i] = dot(self[i] - hp, hn);
-    if (sa[i] >= 0) nin++;
+    sa[i] = dot(self[i] - hp, hn) + 1e-7f;
+    if (sa[i] >= 0.f) num_intersections++;
   }
-  if (nin == num()) return false;
-  if (nin == 0) {
+  // SHOW(sa);
+  if (num_intersections == num()) return false;
+  if (num_intersections == 0) {
     init(0);
     return true;
   }
-  Polygon np;
+  Polygon new_poly;
   for_int(vc, num()) {
     int vp = vc ? vc - 1 : num() - 1;
     bool inc = sa[vc] >= 0.f;
     bool inp = sa[vp] >= 0.f;
-    if (inp ^ inc) np.push(interp(self[vp], self[vc], sa[vc] / (sa[vc] - sa[vp])));
-    if (inc) np.push(self[vc]);
+    if (inp ^ inc) new_poly.push(interp(self[vp], self[vc], sa[vc] / (sa[vc] - sa[vp])));
+    if (inc) new_poly.push(self[vc]);
   }
-  *this = std::move(np);
+  *this = std::move(new_poly);
   return true;
 }
 
-bool Polygon::intersect_bbox(const Bbox& bbox) {
+bool Polygon::intersect_bbox(const Bbox<float, 3>& bbox) {
   assertx(num() >= 3);
-  bool m = false;  // polygon_is_modified
-  m |= intersect_hyperplane(bbox[0], Vector(+1.f, +0.f, +0.f));
+  bool modified = false;
+  modified |= intersect_hyperplane(bbox[0], Vector(+1.f, +0.f, +0.f));
   if (!num()) return true;
-  m |= intersect_hyperplane(bbox[1], Vector(-1.f, +0.f, +0.f));
+  modified |= intersect_hyperplane(bbox[1], Vector(-1.f, +0.f, +0.f));
   if (!num()) return true;
-  m |= intersect_hyperplane(bbox[0], Vector(+0.f, +1.f, +0.f));
+  modified |= intersect_hyperplane(bbox[0], Vector(+0.f, +1.f, +0.f));
   if (!num()) return true;
-  m |= intersect_hyperplane(bbox[1], Vector(+0.f, -1.f, +0.f));
+  modified |= intersect_hyperplane(bbox[1], Vector(+0.f, -1.f, +0.f));
   if (!num()) return true;
-  m |= intersect_hyperplane(bbox[0], Vector(+0.f, +0.f, +1.f));
+  modified |= intersect_hyperplane(bbox[0], Vector(+0.f, +0.f, +1.f));
   if (!num()) return true;
-  m |= intersect_hyperplane(bbox[1], Vector(+0.f, +0.f, -1.f));
+  modified |= intersect_hyperplane(bbox[1], Vector(+0.f, +0.f, -1.f));
   if (!num()) return true;
-  return m;
+  return modified;
 }
 
-bool Polygon::intersect_segment(const Point& p1, const Point& p2, Point& pint) const {
+std::optional<Point> Polygon::intersect_segment(const Point& p1, const Point& p2) const {
   assertx(num() >= 3);
-  Vector n = get_normal();
-  assertx(!is_zero(n));
-  if (!intersect_plane_segment(n, get_planec(n), p1, p2, pint)) return false;
-  return point_inside(n, pint);
+  Vector nor = get_normal();
+  assertx(!is_zero(nor));
+  const auto pint = intersect_plane_segment(nor, get_planec(nor), p1, p2);
+  if (!pint) return {};
+  if (!point_inside(nor, *pint)) return {};
+  return *pint;
 }
 
-bool Polygon::intersect_line(const Point& p, const Vector& v, Point& pint) const {
+std::optional<Point> Polygon::intersect_line(const Point& p, const Vector& v) const {
   assertx(num() >= 3);
-  Vector n = get_normal();
-  if (!assertw(!is_zero(n))) return false;
-  float d = get_planec(n);
-  float numer = d - n[0] * p[0] - n[1] * p[1] - n[2] * p[2];
-  float denom = n[0] * v[0] + n[1] * v[1] + n[2] * v[2];
-  if (!denom) return false;
-  float alpha = numer / denom;
-  pint = p + v * alpha;
-  return point_inside(n, pint);
+  const Vector nor = get_normal();
+  if (!assertw(!is_zero(nor))) return {};
+  const float d = get_planec(nor);
+  const float numerator = d - dot(p, nor);
+  const float denominator = dot(nor, v);
+  if (!denominator) return {};
+  const float alpha = numerator / denominator;
+  const Point pint = p + v * alpha;
+  if (!point_inside(nor, pint)) return {};
+  return pint;
 }
 
 namespace {
 
 int cmp_inter(const Point& p1, const Point& p2, const Vector& vint) {
-  float a1 = pvdot(p1, vint);
-  float a2 = pvdot(p2, vint);
+  float a1 = dot(p1, vint);
+  float a2 = dot(p2, vint);
   return a1 < a2 ? -1 : a1 > a2 ? 1 : 0;
 }
 
 Vector get_vint(const Vector& polynor, const Vector& planenor) {
   Vector vint = cross(polynor, planenor);
   // was 'if (!...) return', then was assertx
-  if (!assertw(vint.normalize())) vint[0] = 1.f;
+  if (!vint.normalize()) vint[0] = 1.f;
   vector_standard_direction(vint);
   return vint;
 }
 
 }  // namespace
 
-void Polygon::intersect_plane(const Vector& polynor, const Vector& planenor, float planed, float planetol,
+void Polygon::intersect_plane(const Vector& poly_normal, const Vector& plane_normal, float plane_d, float plane_tol,
                               Array<Point>& pa) const {
   // See example use in Filtera3d.cpp:compute_intersect()
   assertx(num() >= 3);
   const auto& self = *this;
   PArray<float, 8> sa(num());
   for_int(i, num()) {
-    float sc = pvdot(self[i], planenor) - planed;
-    if (abs(sc) <= planetol) sc = 0.f;
+    float sc = dot(self[i], plane_normal) - plane_d;
+    if (abs(sc) <= plane_tol) sc = 0.f;
     sa[i] = sc;
   }
   float sp = 0.f;
@@ -163,18 +161,16 @@ void Polygon::intersect_plane(const Vector& polynor, const Vector& planenor, flo
     assertx(sa[i]);
     int i0 = i;
     int i1 = i + 1 < num() ? i + 1 : 0;
-    if (sa[i0] * sa[i1] > 0) continue;
+    if (sa[i0] * sa[i1] > 0.f) continue;
     pa.push(interp(self[i0], self[i1], sa[i1] / (sa[i1] - sa[i0])));
   }
   assertx((pa.num() & 0x1) == 0);
   if (!pa.num()) return;
-  Vector vint = get_vint(polynor, planenor);
-  struct InterLess {
-    explicit InterLess(const Vector& vint) : _vint(vint) {}
-    bool operator()(const Point& p1, const Point& p2) const { return cmp_inter(p1, p2, _vint) == -1; }
-    const Vector& _vint;
+  Vector vint = get_vint(poly_normal, plane_normal);
+  const auto by_increasing_intersection_t = [&](const Point& p1, const Point& p2) {
+    return cmp_inter(p1, p2, vint) == -1;
   };
-  sort(pa, InterLess(vint));
+  sort(pa, by_increasing_intersection_t);
 }
 
 static inline float adjust_tolerance(float tol) {
@@ -239,24 +235,24 @@ bool Polygon::point_inside(const Vector& pnor, const Point& point) const {
   int ax1 = mod3(axis + 2);
   float py = point[ax0];
   float pz = point[ax1];
-  float y0 = self[num() - 1][ax0] - py;
-  float z0 = self[num() - 1][ax1] - pz;
+  float y0 = last()[ax0] - py;
+  float z0 = last()[ax1] - pz;
   float y1, z1;
   dummy_init(y1, z1);
-  int nint = 0;
+  int num_intersectionst = 0;
   for (int i = 0; i < num(); i++, y0 = y1, z0 = z1) {
     y1 = self[i][ax0] - py;
     z1 = self[i][ax1] - pz;
-    if (z0 >= 0 && z1 >= 0) continue;
-    if (z0 < 0 && z1 < 0) continue;
-    if (y0 < 0 && y1 < 0) continue;
-    if (y0 >= 0 && y1 >= 0) {
-      nint++;
+    if (z0 >= 0.f && z1 >= 0.f) continue;
+    if (z0 < 0.f && z1 < 0.f) continue;
+    if (y0 < 0.f && y1 < 0.f) continue;
+    if (y0 >= 0.f && y1 >= 0.f) {
+      num_intersectionst++;
       continue;
     }
-    if (y0 - (y1 - y0) / (z1 - z0) * z0 >= 0) nint++;
+    if (y0 - (y1 - y0) / (z1 - z0) * z0 >= 0.f) num_intersectionst++;
   }
-  return (nint & 0x1) != 0;
+  return (num_intersectionst & 0x1) != 0;
 }
 
 bool Polygon::is_convex() const {
@@ -266,10 +262,10 @@ bool Polygon::is_convex() const {
   unsigned n = num();  // unsigned to avoid -Werror=strict-overflow
   Vector dir = get_normal_dir();
   for_int(i, int(n - 2)) {
-    if (dot(cross(self[i], self[i + 1], self[i + 2]), dir) < 0) return false;
+    if (dot(cross(self[i], self[i + 1], self[i + 2]), dir) < 0.f) return false;
   }
-  if (dot(cross(self[n - 2], self[n - 1], self[0]), dir) < 0) return false;
-  if (dot(cross(self[n - 1], self[0], self[1]), dir) < 0) return false;
+  if (dot(cross(self[n - 2], self[n - 1], self[0]), dir) < 0.f) return false;
+  if (dot(cross(self[n - 1], self[0], self[1]), dir) < 0.f) return false;
   return true;
 }
 
@@ -279,14 +275,14 @@ std::ostream& operator<<(std::ostream& os, const Polygon& poly) {
   return os << " }\n";
 }
 
-bool intersect_plane_segment(const Vector& normal, float d, const Point& p1, const Point& p2, Point& pint) {
-  float s1 = pvdot(p1, normal) - d;
-  float s2 = pvdot(p2, normal) - d;
-  if ((s1 < 0 && s2 < 0) || (s1 > 0 && s2 > 0)) return false;
-  // what to do when segment lies in plane?  report nothing?
-  if (!s1 && !s2) return false;
-  pint = interp(p1, p2, s2 / (s2 - s1));
-  return true;
+std::optional<Point> intersect_plane_segment(const Vector& normal, float d, const Point& p1, const Point& p2) {
+  const float s1 = dot(p1, normal) - d;
+  const float s2 = dot(p2, normal) - d;
+  if ((s1 < 0.f && s2 < 0.f) || (s1 > 0.f && s2 > 0.f)) return {};
+  const float denominator = s2 - s1;
+  // When the segment lies in the polygon plane, we report no intersection.  Is this reasonable?
+  if (!denominator) return {};
+  return interp(p1, p2, s2 / denominator);
 }
 
 Vector orthogonal_vector(const Vector& v) {
@@ -316,7 +312,7 @@ void vector_standard_direction(Vector& v) {
     }
   }
   assertx(maxa);
-  if (v[maxc] < 0) v = -v;
+  if (v[maxc] < 0.f) v = -v;
 }
 
 }  // namespace hh

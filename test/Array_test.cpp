@@ -7,42 +7,42 @@
 using namespace hh;
 
 int main() {
-  struct ST {
-    explicit ST(int i) : _i(i) { showf("ST(%d)\n", _i); }
-    ~ST() { showf("~ST(%d)\n", _i); }
+  struct S {
+    explicit S(int i) : _i(i) { showf("S(%d)\n", _i); }
+    ~S() { showf("~S(%d)\n", _i); }
     int _i;
   };
-  auto func_make_array = [](int i0, int n) {  // -> Array<unique_ptr<ST>>
-    Array<unique_ptr<ST>> ar;
-    for_int(i, n) ar.push(make_unique<ST>(i0 + i));
+  const auto func_make_array = [](int i0, int n) {  // -> Array<unique_ptr<S>>
+    Array<unique_ptr<S>> ar;
+    for_int(i, n) ar.push(make_unique<S>(i0 + i));
     return ar;
   };
   {
     SHOW("beg 4");
-    Array<unique_ptr<ST>> ar;
-    ar.push(make_unique<ST>(4));
+    Array<unique_ptr<S>> ar;
+    ar.push(make_unique<S>(4));
     SHOW("end");
   }
   {
     SHOW("beg 4 5");
-    Array<unique_ptr<ST>> ar;
-    ar.push(make_unique<ST>(4));
-    ar.push(make_unique<ST>(5));
+    Array<unique_ptr<S>> ar;
+    ar.push(make_unique<S>(4));
+    ar.push(make_unique<S>(5));
     SHOW("end");
   }
   {
     SHOW("beg 4 5 6");
-    Array<unique_ptr<ST>> ar;
-    ar.push(make_unique<ST>(4));
-    ar.push(make_unique<ST>(5));
-    ar.push(make_unique<ST>(6));
+    Array<unique_ptr<S>> ar;
+    ar.push(make_unique<S>(4));
+    ar.push(make_unique<S>(5));
+    ar.push(make_unique<S>(6));
     for (auto& e : ar) SHOW(e->_i);
     SHOW("end");
   }
   {
     SHOW("beg 20");
-    Array<unique_ptr<ST>> ar;
-    for_int(i, 20) ar.push(make_unique<ST>(i));
+    Array<unique_ptr<S>> ar;
+    for_int(i, 20) ar.push(make_unique<S>(i));
     SHOW("end");
   }
   {
@@ -52,7 +52,7 @@ int main() {
   }
   {
     SHOW("beg 500");
-    Array<unique_ptr<ST>> ar;
+    Array<unique_ptr<S>> ar;
     ar = func_make_array(500, 2);
     SHOW(ar[0]->_i);
     SHOW("beg 600");
@@ -130,9 +130,7 @@ int main() {
   {
     Array<int> ar{8, 7, 6, 5, 4, 9, 10};
     for_int(i, ar.num()) SHOW(i, rank_element(ar, i));
-    for (double rankf : {0., .1, .2, .3, .4, .5, .6, .7, .8, .9, 1.}) {
-      SHOW(rankf, rankf_element(ar, rankf));
-    }
+    for (double rankf : {0., .1, .2, .3, .4, .5, .6, .7, .8, .9, 1.}) SHOW(rankf, rankf_element(ar, rankf));
   }
   {
     Array<int> ar1{1, 2};
@@ -149,11 +147,11 @@ int main() {
     SHOW(ar[2]);  // out-of-bounds error
   }
   {
-    using Array3 = Vec<Array<int>, 3>;
+    using Array3 = Vec3<Array<int>>;
     Array3 ar;
     ar[0].push(1);
 #if 0
-    // Note: gcc unhappy creating copy constructor for Vec<T, n> if T has explicit copy constructor
+    // Note: gcc unhappy creating copy constructor for Vec<T, n> if T has explicit copy constructor.
     // This was my motivation for prior "hh_explicit" macro definition.
     Array3 ar2(ar);
     SHOW(ar2[0]);
@@ -162,6 +160,7 @@ int main() {
 }
 
 namespace hh {
+
 template class Array<unsigned>;
 template class Array<double>;
 template class Array<const int*>;
@@ -175,16 +174,18 @@ template class CArrayView<double>;
 template class CArrayView<const int*>;
 
 using U = unique_ptr<int>;
-template <> Array<U>::Array(int, const U&) {}                                 // non-&& definition illegal
-template <> Array<U>::Array(const Array<U>&) : ArrayView() {}                 // non-&& definition illegal
-template <> Array<U>::Array(CArrayView<U>) : ArrayView() {}                   // non-&& definition illegal
-template <> Array<U>::Array(std::initializer_list<U>) : ArrayView() {}        // definition illegal
-template <> Array<U>& Array<U>::operator=(CArrayView<U>) { return *this; }    // definition illegal
-template <> Array<U>& Array<U>::operator=(const Array<U>&) { return *this; }  // definition illegal
-template <> void Array<U>::init(int, const U&) {}                             // non-&& definition illegal
-template <> void Array<U>::push(const U&) {}                                  // non-&& definition illegal
-template <> void Array<U>::push_array(CArrayView<U>) {}                       // non-&& definition illegal
-template <> void Array<U>::unshift(const U&) {}                               // non-&& definition illegal
-template <> void Array<U>::unshift(CArrayView<U>) {}                          // non-&& definition illegal
+// Override illegal definitions for U:
+template <> Array<U>::Array(int, const U&) {}
+template <> Array<U>::Array(const Array<U>&) : ArrayView() {}
+template <> Array<U>::Array(CArrayView<U>) : ArrayView() {}
+template <> Array<U>::Array(std::initializer_list<U>) : ArrayView() {}
+template <> Array<U>& Array<U>::operator=(CArrayView<U>) { return *this; }
+template <> Array<U>& Array<U>::operator=(const Array<U>&) { return *this; }
+template <> void Array<U>::init(int, const U&) {}
+template <> void Array<U>::push(const U&) {}
+template <> void Array<U>::push_array(CArrayView<U>) {}
+template <> void Array<U>::unshift(const U&) {}
+template <> void Array<U>::unshift(CArrayView<U>) {}
 template class Array<U>;
+
 }  // namespace hh

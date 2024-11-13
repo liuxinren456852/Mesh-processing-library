@@ -89,7 +89,7 @@ struct S_tess {
 } g_tess;
 
 struct S_inter {
-  Bbox bbox;                         // global bounding box of all polygons
+  Bbox<float, 3> bbox;               // global bounding box of all polygons
   Array<unique_ptr<Polygon>> vpoly;  // (not Array<Polygon> as resizing would invalidate pointers)
   int nedges;
 } g_inter;
@@ -104,23 +104,22 @@ struct S_outlier {
   Array<Point> pa;
 } g_outlier;
 
-HH_STATNP(Slnvert);   // polyline # of vertices
-HH_STATNP(Sledgel);   // polyline edge length
-HH_STATNP(Slclosed);  // polyline closed
-HH_STATNP(Spnvert);   // polygon # of vertices
-HH_STATNP(Spedgel);   // polygon edge length
-HH_STATNP(Sqdiagl);   // quad diagonal length
-HH_STATNP(Sparea);    // polygon area
-HH_STATNP(Splanar);   // polygon planarity (0=planar)
-HH_STATNP(Sptnor);    // point, existence of normal
-Bbox g_bbox;          // box extent
-float fsplit;         // fsplit=split; { fsplit*=speedup; }
-A3dVertexColor zero_vertexcolor;
+HH_STAT_NP(Slnvert);    // polyline # of vertices
+HH_STAT_NP(Sledgel);    // polyline edge length
+HH_STAT_NP(Slclosed);   // polyline closed
+HH_STAT_NP(Spnvert);    // polygon # of vertices
+HH_STAT_NP(Spedgel);    // polygon edge length
+HH_STAT_NP(Sqdiagl);    // quad diagonal length
+HH_STAT_NP(Sparea);     // polygon area
+HH_STAT_NP(Splanar);    // polygon planarity (0=planar)
+HH_STAT_NP(Sptnor);     // point, existence of normal
+Bbox<float, 3> g_bbox;  // box extent
+float fsplit;           // fsplit=split; { fsplit*=speedup; }
 Vec2<float> colorheight;
 A3dVertexColor input_color;
 
 A3dVertex affinely_combine(const A3dElem& el, CArrayView<float> ar_w) {
-  A3dVertex vavg(Point(0.f, 0.f, 0.f), Vector(0.f, 0.f, 0.f), zero_vertexcolor);
+  A3dVertex vavg{};
   Vector pnor = el.pnormal();
   for_int(i, el.num()) {
     float a = ar_w[i];
@@ -140,7 +139,7 @@ A3dVertex get_vertex_combination(const A3dElem& el, int i, int j, int k, int nt)
 
 void delay_frame() {
   if (!frdelay) return;
-  assertx(frdelay > 0);
+  assertx(frdelay > 0.);
   my_sleep(frdelay);
 }
 
@@ -152,7 +151,7 @@ void delay_element() {
 
 bool is_degenerate(const A3dElem& el) {
   if (!assertw(el.num() < 3)) return true;
-  Vector vt(0.f, 0.f, 0.f);
+  Vector vt{};
   for_intL(i, 1, el.num() - 1) vt += cross(el[0].p, el[i].p, el[i + 1].p);
   float area = .5f * mag(vt);
   return !area;
@@ -169,7 +168,7 @@ bool out_of_bounds(const A3dElem& el) {
 }
 
 bool polygon_needs_flip(const A3dElem& el) {
-  Vector va(0.f, 0.f, 0.f);
+  Vector va{};
   Vector pnor = el.pnormal();
   for_int(i, el.num()) va += is_zero(el[i].n) ? pnor : el[i].n;
   return dot(va, pnor) < 0;
@@ -206,7 +205,7 @@ void compute_stats(const A3dElem& el) {
     Sqdiagl.enter(dist(el[1].p, el[3].p));
   }
   assertx(el.num() >= 3);
-  Vector vt(0.f, 0.f, 0.f);
+  Vector vt{};
   for_intL(i, 1, el.num() - 1) vt += cross(el[0].p, el[i].p, el[i + 1].p);
   float area = .5f * mag(vt);
   Sparea.enter(area);
@@ -215,13 +214,13 @@ void compute_stats(const A3dElem& el) {
     float sumd = 0.f;
     for_int(i, el.num()) {
       const Point& p = el[i].p;
-      sumd += pvdot(p, vt);
+      sumd += dot(p, vt);
     }
     float d = sumd / el.num();
     float tol = 0.f;
     for_int(i, el.num()) {
       const Point& p = el[i].p;
-      tol = max(tol, pvdot(p, vt) - d);
+      tol = max(tol, dot(p, vt) - d);
     }
     Splanar.enter(tol / sqrt(area));
   }
@@ -244,9 +243,7 @@ void pass3(const A3dElem& el) {
     nelem = 1;
   }
   if (info) compute_stats(el);
-  if (box || boxframe) for_int(i, el.num()) {
-      g_bbox.union_with(el[i].p);
-    }
+  for_int(i, el.num()) g_bbox.union_with(el[i].p);
   output_element(el);
   delay_element();
 }
@@ -336,7 +333,7 @@ void show_normals(const A3dElem& el) {
     // el is not necessarily Type::polygon
     Array<Point> pa;
     for_int(i, el.num()) pa.push(el[i].p);
-    Point pavg = centroid(pa);
+    Point pavg = mean(pa);
     for_int(i, el.num()) c += dist(pa[i], pavg);
     c /= el.num();
   }
@@ -361,12 +358,8 @@ bool compute_mindis(const Point& p) {
   static int pn = 1;
   static unique_ptr<PointSpatial<int>> SPp;
   if (!SPp) SPp = make_unique<PointSpatial<int>>(30);
-  SpatialSearch<int> ss(SPp.get(), p, mindis);  // look no farther than mindis
-  if (!ss.done()) {
-    float dis2;
-    ss.next(&dis2);
-    if (dis2 < square(mindis)) return true;
-  }
+  SpatialSearch<int> ss(SPp.get(), p, mindis);  // Look no farther than mindis.
+  if (!ss.done() && ss.next().d2 < square(mindis)) return true;
   SPp->enter(pn++, new Point(p));  // never deleted
   return false;
 }
@@ -453,7 +446,7 @@ bool loop(A3dElem& el) {
         Vector n2 = el[i].p - el[i1].p;
         ar_sharp.push((n1.normalize() && n2.normalize() &&
                        angle_between_unit_vectors(normalized(el[i0].p - el[i].p), normalized(el[i].p - el[i1].p)) >
-                           to_rad(sharpthresh)));
+                           rad_from_deg(sharpthresh)));
       }
       for_int(i, el.num()) {
         if (ar_sharp[i]) {
@@ -472,18 +465,18 @@ bool loop(A3dElem& el) {
   }
   for_int(i, el.num()) {
     if (nonormals || (optnormals && !compare(el[i].n, pnor, 1e-6f))) el[i].n = Vector(0.f, 0.f, 0.f);
-    if (nocolor) el[i].c = zero_vertexcolor;
+    if (nocolor) el[i].c = A3dVertexColor{};
     bool validcol = false;
-    if (cdiff[0] >= 0) {
+    if (cdiff[0] >= 0.f) {
       el[i].c.d = cdiff;
       validcol = true;
     }
-    if (cspec[0] >= 0) {
+    if (cspec[0] >= 0.f) {
       el[i].c.s = cspec;
       validcol = true;
     }
     if (validcol && !el[i].c.g[0]) el[i].c.g[0] = 1.f;
-    if (cphong[0] >= 0) el[i].c.g = cphong;
+    if (cphong[0] >= 0.f) el[i].c.g = cphong;
     if (colorheight[1] != colorheight[0]) {
       float c = (el[i].p[2] - colorheight[0]) / (colorheight[1] - colorheight[0]);
       c = clamp(c, 0.f, 1.f);
@@ -511,7 +504,7 @@ bool loop(A3dElem& el) {
   }
   if (flipnormals) flip_polygon(el);
   if (stretch && polyl && el.num() == 2) {
-    if (stretch > 0) {
+    if (stretch > 0.f) {
       el[1].p += (el[1].p - el[0].p) * stretch;
     } else {
       el[0].p += (el[0].p - el[1].p) * stretch;
@@ -527,9 +520,7 @@ bool loop(A3dElem& el) {
       }
       if (!is_zero(nor)) el[i].p += nor * offset;
     }
-    if (noise) for_int(c, 3) {
-        el[i].p[c] += Random::G.gauss() * noise;
-      }
+    if (noise) for_int(c, 3) el[i].p[c] += Random::G.gauss() * noise;
   }
   if (randcolor) {
     A3dColor col;
@@ -539,9 +530,7 @@ bool loop(A3dElem& el) {
   if (intersect && polyg) {
     auto npoly = make_unique<Polygon>();
     el.get_polygon(*npoly);
-    Bbox bbox;
-    npoly->get_bbox(bbox);
-    g_inter.bbox.union_with(bbox);
+    g_inter.bbox.union_with(Bbox{*npoly});
     g_inter.vpoly.push(std::move(npoly));
     return false;  // new: only output intersection edges
   }
@@ -565,20 +554,18 @@ bool loop(A3dElem& el) {
 using KD = Kdtree<Polygon*, 3>;
 
 void compute_intersect() {
-  // e.g.:  Filtermesh ~/data/mesh/peedy.orig.m -toa | Filtera3d -inter | G3d ~/data/mesh/peedy.orig.m -input -key NN
+  // e.g.:  Filtermesh ~/data/mesh/peedy.orig.m -toa | Filtera3d -inter | G3dOGL ~/data/mesh/peedy.orig.m -input -key NN
   if (!g_inter.vpoly.num()) return;
-  Frame f = g_inter.bbox.get_frame_to_cube();
+  const Frame xform = g_inter.bbox.get_frame_to_cube();
   KD kd(8);
   A3dElem el;
   Array<Point> pa;
   for (auto& ppoly : g_inter.vpoly) {
     Polygon& poly = *ppoly;
-    Bbox bbox;
-    poly.get_bbox(bbox);
-    bbox[0] *= f;
-    bbox[1] *= f;
-    auto func_considerpoly = [&](Polygon* const& id, ArrayView<float> /*unused*/, ArrayView<float> /*unused*/,
-                                 KD::CBloc /*unused*/) {
+    Bbox bbox{poly};
+    for_int(min_max, 2) static_cast<Point&>(bbox[min_max]) *= xform;
+    const auto func_considerpoly = [&](Polygon* const& id, Vec3<float>& bb0, Vec3<float>& bb1, KD::CBloc floc) {
+      dummy_use(bb0, bb1, floc);
       const Polygon& p1 = *id;
       const Polygon& p2 = poly;
       pa = intersect_poly_poly(p1, p2);
@@ -646,12 +633,10 @@ void join_lines() {
     // for directed search, candidate vertices are ones with no in_edges
     Graph<int> opp_graph;
     for (int v : graph.vertices()) opp_graph.enter(v);
-    for (int v1 : graph.vertices()) {
+    for (int v1 : graph.vertices())
       for (int v2 : graph.edges(v1)) opp_graph.enter(v2, v1);
-    }
-    for (int v : opp_graph.vertices()) {
+    for (int v : opp_graph.vertices())
       if (graph.out_degree(v) > opp_graph.out_degree(v)) candv.enter(v);
-    }
     for (;;) {
       int vi;
       if (!candv.empty()) {
@@ -695,13 +680,9 @@ void join_lines() {
 }
 
 void compute_outlier() {
-  Array<bool> ar_is_outlier;
-  Bbox bbox;
-  for_int(i, g_outlier.pa.num()) {
-    ar_is_outlier.push(false);
-    bbox.union_with(g_outlier.pa[i]);
-  }
-  Frame xform = bbox.get_frame_to_cube(), xformi = ~xform;
+  Array<bool> ar_is_outlier(g_outlier.pa.num(), false);
+  const Bbox bbox{g_outlier.pa};
+  const Frame xform = bbox.get_frame_to_cube(), xform_inverse = ~xform;
   PointSpatial<int> SPp(30);
   for_int(i, g_outlier.pa.num()) {
     g_outlier.pa[i] *= xform;
@@ -710,15 +691,13 @@ void compute_outlier() {
   int num_outliers = 0;
   for_int(i, g_outlier.pa.num()) {
     SpatialSearch<int> ss(&SPp, g_outlier.pa[i]);
-    float dis2;
-    dummy_init(dis2);
-    for_int(j, outliern + 1) {  // + 1 to include this point
-      assertx(!ss.done());
-      ss.next(&dis2);
-    }
-    float dis = my_sqrt(dis2) * xformi[0][0];
-    HH_SSTAT(Soutlierd, dis);
-    if (dis >= outlierd) {
+    float d2;
+    dummy_init(d2);
+    for_int(j, outliern + 1)  // + 1 to include this point
+        d2 = ss.next().d2;
+    float d = my_sqrt(d2) * xform_inverse[0][0];
+    HH_SSTAT(Soutlierd, d);
+    if (d >= outlierd) {
       ar_is_outlier[i] = true;
       num_outliers++;
     }
@@ -769,7 +748,7 @@ void process(RSA3dStream& ia3d) {
     showf("%g %g %g\n", g_bbox[0][0], g_bbox[0][1], g_bbox[0][2]);
     showf("%g %g %g\n", g_bbox[1][0], g_bbox[1][1], g_bbox[1][2]);
   }
-  if (boxframe) FrameIO::write(std::cout, g_bbox.get_frame_to_cube(), 0, 0.f, false);
+  if (boxframe) assertx(FrameIO::write(std::cout, ObjectFrame{g_bbox.get_frame_to_cube()}));
   if (ncullsphere) showdf("ncullsphere=%d\n", ncullsphere);
   if (nmindis) showdf("nmindis=%d\n", nmindis);
   if (nfixorient) showdf("nfixorient=%d\n", nfixorient);
@@ -779,15 +758,16 @@ void process(RSA3dStream& ia3d) {
 }  // namespace
 
 int main(int argc, const char** argv) {
-  Vec3<float> diff = {-1.f, 0.f, 0.f};
-  Vec3<float> spec = {-1.f, 0.f, 0.f};
-  Vec3<float> phong = {-1.f, 0.f, 0.f};
-  Vec4<float> cullsphere = {0.f, 0.f, 0.f, 0.f};
-  Vec2<float> outlier = {0.f, 0.f};
+  Vec3<float> diff{-1.f, 0.f, 0.f};
+  Vec3<float> spec{-1.f, 0.f, 0.f};
+  Vec3<float> phong{-1.f, 0.f, 0.f};
+  Vec4<float> cullsphere{0.f, 0.f, 0.f, 0.f};
+  Vec2<float> outlier{0.f, 0.f};
   string restrictf;
   string transf;
   bool stat = false;
   ParseArgs args(argc, argv);
+  HH_ARGSC("An 'a3d stream' is read from stdin or first arg.  Subsequent options are:");
   HH_ARGSF(onlypoly, ": remove special a3d commands");
   HH_ARGSF(nopolygons, ": cull polygons");
   HH_ARGSF(nopolylines, ": cull polylines");
@@ -801,12 +781,12 @@ int main(int argc, const char** argv) {
   HH_ARGSP(sharpthresh, "deg : corners in smoothcurves");
   HH_ARGSP(smoothcurves, "iter : smooth the polylines");
   HH_ARGSP(minverts, "nv : only keep elements with >=nv verts");
-  HH_ARGSC("", ":**");
+  HH_ARGSC("", ":");
   HH_ARGSF(culloutside, ": set to remove points outside");
   HH_ARGSP(cullsphere, "x y z r : remove points within sphere");
   HH_ARGSP(mindis, "f : make no pair of points closer than f");
   HH_ARGSP(outlier, "n d : remove points if n'th closest >d");
-  HH_ARGSC("", ":**");
+  HH_ARGSC("", ":");
   HH_ARGSF(nonormals, ": remove vertex normals");
   HH_ARGSF(optnormals, ": remove unnecessary polygon normals");
   HH_ARGSF(nocolor, ": remove color information");
@@ -827,13 +807,13 @@ int main(int argc, const char** argv) {
   HH_ARGSF(twosided, ": make polygons two-sided");
   HH_ARGSF(triangulate, ": triangulate all faces with > 3 vertices");
   HH_ARGSP(tessellate, "n : subdivide each triangle into n*n faces");
-  HH_ARGSC("", ":**");
+  HH_ARGSC("", ":");
   HH_ARGSF(info, ": print statistics");
   HH_ARGSF(stat, ": print statistics");
   HH_ARGSF(box, ": show bounding box");
   HH_ARGSF(boxframe, ": output frame that will box data");
   HH_ARGSF(nooutput, ": turn off a3d output");
-  HH_ARGSC("", ":**");
+  HH_ARGSC("", ":");
   HH_ARGSP(split, "i : output frame every ith element");
   HH_ARGSP(speedup, "factor : increase 'split' every frame");
   HH_ARGSP(frdelay, "fsec : pause after each frame");
@@ -851,7 +831,7 @@ int main(int argc, const char** argv) {
     crestrictf = FrameIO::parse_frame(restrictf);
   }
   cusphr = cullsphere[3];
-  if (cusphr) cusphc = Point(cullsphere[0], cullsphere[1], cullsphere[2]);
+  if (cusphr) cusphc = cullsphere.head<3>();
   if (outlier[0]) {
     outliern = int(outlier[0]);
     outlierd = outlier[1];

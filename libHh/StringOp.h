@@ -15,7 +15,7 @@ namespace hh {
 inline bool contains(const string& str, const string& substr) { return str.find(substr) != string::npos; }
 
 // Does string have the specified prefix string?
-inline bool begins_with(const string& s, const string& se) {
+inline bool starts_with(const string& s, const string& se) {
   assertx(!se.empty());
   return !s.compare(0, se.size(), se);
 }
@@ -28,8 +28,8 @@ inline bool ends_with(const string& s, const string& se) {
 }
 
 // If se is not at beg of s, return false; else erase se from s and return true.
-inline bool remove_at_beginning(string& s, const string& se) {
-  if (!begins_with(s, se)) return false;
+inline bool remove_at_start(string& s, const string& se) {
+  if (!starts_with(s, se)) return false;
   s.erase(0, se.size());
   return true;
 }
@@ -41,31 +41,31 @@ inline bool remove_at_end(string& s, const string& se) {
   return true;
 }
 
-// Replace all pattern substrings with specified replacement substring.
-static inline string replace_all(const string& str, const string& spattern, const string& sreplacement) {
-  string sres;
+// Replace all instances of substring with the replacement substring.
+static inline string replace_all(const string& str, const string& substring, const string& sreplacement) {
+  string result;
   string::size_type i = 0;
   for (;;) {
-    auto j = str.find(spattern, i);
-    sres += str.substr(i, j - i);
+    auto j = str.find(substring, i);
+    result += str.substr(i, j - i);
     if (j == string::npos) break;
-    sres += sreplacement;
-    i = j + spattern.size();
+    result += sreplacement;
+    i = j + substring.size();
   }
-  return sres;
+  return result;
 }
 
 // Convert a string to lowercase.
 inline string to_lower(string s) {
   // for (char& ch : s) if (std::isupper(ch)) ch += 'a' - 'A';
-  std::use_facet<std::ctype<char>>(std::locale()).tolower(&s[0], &s[0] + s.size());  // fails with s.data()
+  std::use_facet<std::ctype<char>>(std::locale()).tolower(s.data(), s.data() + s.size());
   return s;
 }
 
 // Convert a string to uppercase.
 inline string to_upper(string s) {
   // for (char& ch : s) if (std::islower(ch)) ch += 'A' - 'a';
-  std::use_facet<std::ctype<char>>(std::locale()).toupper(&s[0], &s[0] + s.size());  // fails with s.data()
+  std::use_facet<std::ctype<char>>(std::locale()).toupper(s.data(), s.data() + s.size());
   return s;
 }
 

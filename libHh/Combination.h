@@ -23,9 +23,8 @@ template <typename T> class Combination : public Map<T, float> {
   void shrink_to_fit() const {  // remove elements with zero weights
     Combination& var_self = const_cast<Combination&>(*this);
     Array<T> ar;
-    for_map_key_value(*this, [&](const T& e, float v) {
+    for (auto& [e, v] : *this)
       if (!v) ar.push(e);
-    });
     for (const T& e : ar) var_self.remove(e);
   }
   using base::values;
@@ -33,7 +32,7 @@ template <typename T> class Combination : public Map<T, float> {
 
 template <typename T, typename Func = void(const T& e, float val)>
 void for_combination(const Combination<T>& combination, Func func) {
-  for (auto& kv : combination) func(kv.first, kv.second);
+  for (auto& [key, value] : combination) func(key, value);
 }
 
 }  // namespace hh

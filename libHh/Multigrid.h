@@ -21,7 +21,7 @@
   setup_rhs(grid_orig, multigrid.rhs());
   if (optional)
     for (const auto& u : range(dims)) multigrid.initial_estimate()[u] = some_value;
-  // Grid<2, float> grid_orig(dims); if (optional) multigrid.set_original(grid_orig);  // for convergence analysis
+  // Grid<2, float> grid_orig(dims); if (optional) multigrid.set_original(grid_orig);  // For convergence analysis.
   multigrid.solve();
   CGridView<2, float> grid_result = multigrid.result();
   if (1) HH_RSTAT(Sresult, grid_result);
@@ -30,8 +30,8 @@
 
 namespace hh {
 
-#if !defined(HH_MULTIGRID_TIMER)  // client can define HH_MULTIGRID_TIMER(x) as nothing to omit all the timers.
-#define HH_MULTIGRID_TIMER(x) HH_STIMER(x)
+#if !defined(HH_MULTIGRID_TIMER)  // client can define HH_MULTIGRID_TIMER(name) as nothing to omit all the timers.
+#define HH_MULTIGRID_TIMER(name) HH_STIMER(name)
 #endif
 
 // Notes:
@@ -50,7 +50,7 @@ inline double max_e(double e) { return e; }
 inline float max_e(const Vector4& e) { return max(e); }
 
 // Specialize mean() of Grid for parallelism.
-template <int D, typename T> std::enable_if_t<std::is_arithmetic<T>::value, mean_type_t<T>> mean(CGridView<D, T> g) {
+template <int D, typename T> std::enable_if_t<std::is_arithmetic_v<T>, mean_type_t<T>> mean(CGridView<D, T> g) {
   using MeanType = mean_type_t<T>;
   MeanType v;
   my_zero(v);
@@ -59,28 +59,25 @@ template <int D, typename T> std::enable_if_t<std::is_arithmetic<T>::value, mean
     Warning("Zero-size grid");
     return v;
   }
-  constexpr bool avoid_threadpool = false;
-  if (avoid_threadpool || g.size() * 1 < k_omp_thresh) {
-    omp_parallel_for_T(reduction(+ : v) if (g.size() * 1 >= k_omp_thresh), intptr_t, i, 0, size) { v += g.flat(i); }
+  if (g.size() * 1 < k_parallel_thresh) {
+    for (intptr_t i : range(size)) v += g.flat(i);
   } else {
     const int num_threads = get_max_threads();
-    const intptr_t chunk_size = (size + num_threads - 1) / num_threads;
     Array<MeanType> means(num_threads);
-    parallel_for_each(range(num_threads), [&](const int thread_index) {
+    parallel_for_chunk(range(size), num_threads, [&](const int thread_index, auto subrange) {
       MeanType v2;
       my_zero(v2);
-      for_each(range(thread_index * chunk_size, std::min((thread_index + 1) * chunk_size, size)),
-               [&](const intptr_t i) { v2 += g.flat(i); });
+      for (const intptr_t i : subrange) v2 += g.flat(i);
       means[thread_index] = v2;
     });
     for_int(thread_index, num_threads) v += means[thread_index];
   }
   return v * (1. / size);
 }
-template <int D, typename T> std::enable_if_t<std::is_arithmetic<T>::value, mean_type_t<T>> mean(GridView<D, T> g) {
+template <int D, typename T> std::enable_if_t<std::is_arithmetic_v<T>, mean_type_t<T>> mean(GridView<D, T> g) {
   return mean(static_cast<CGridView<D, T>>(g));
 }
-template <int D, typename T> std::enable_if_t<std::is_arithmetic<T>::value, mean_type_t<T>> mean(const Grid<D, T>& g) {
+template <int D, typename T> std::enable_if_t<std::is_arithmetic_v<T>, mean_type_t<T>> mean(const Grid<D, T>& g) {
   return mean(static_cast<CGridView<D, T>>(g));
 }
 
@@ -91,9 +88,9 @@ template <int D> Vector4 mean(CGridView<D, Vector4> grid) {
   Vec4<double> v;
   fill(v, 0.);
   for (const auto& e : grid) for_int(c, 4) v[c] += e[c];
-  v = v / static_cast<double>(assertx(grid.size()));
+  v = v / double(assertx(grid.size()));
   Vector4 vec;
-  for_int(c, 4) vec[c] = static_cast<float>(v[c]);
+  for_int(c, 4) vec[c] = float(v[c]);
   return vec;
 }
 template <int D> Vector4 mean(GridView<D, Vector4> grid) { return mean(static_cast<CGridView<D, Vector4>>(grid)); }
@@ -168,12 +165,12 @@ class Multigrid : noncopyable {
   Periodic _periodic;
   Metric _metric;
   //
-  static constexpr bool b_no_periodicity = std::is_same<Periodic, MultigridPeriodicNone<D>>::value;
-  static constexpr bool b_default_metric = std::is_same<Metric, MultigridMetricIsotropic<D>>::value;
+  static constexpr bool b_no_periodicity = std::is_same_v<Periodic, MultigridPeriodicNone<D>>;
+  static constexpr bool b_default_metric = std::is_same_v<Metric, MultigridMetricIsotropic<D>>;
   static constexpr bool b_fastest = 0;
   static constexpr int k_direct_solver_resolution = 2;  // = 2, 4, 8
   static constexpr int k_num_iter_gauss_seidel = 2;     // 1, 2, 5, 10, 20, 100; note that 1 or 2 is sufficient
-  static constexpr int k_default_num_vcycles = 0 ? 25 : std::is_same<T, double>::value ? 12 : 5;  // 5, 12, 16, 25, 50
+  static constexpr int k_default_num_vcycles = 0 ? 25 : std::is_same_v<T, double> ? 12 : 5;  // 5, 12, 16, 25, 50
   static constexpr bool k_enable_specializations = b_no_periodicity && 1;
   //
   bool have_orig() const { return _grid_orig.size() > 0; }
@@ -190,7 +187,7 @@ class Multigrid : noncopyable {
   // Box filter on dual grid; dimensions are halved except along dimensions whose size is already 1.
   Grid<D, T> dual_downsample(CGridView<D, T> grid) { return dual_downsample_aux(Specialize<Z>{}, grid); }
   template <int DD> Grid<D, T> dual_downsample_aux(Specialize<DD>, CGridView<D, T> grid) {
-    HH_MULTIGRID_TIMER(_downsample);
+    HH_MULTIGRID_TIMER("_downsample");
     const Vec<int, D> dims = grid.dims();
     assertx(max(dims) > 1);
     const Vec<int, D> ndims = (dims + 1) / 2;
@@ -208,18 +205,15 @@ class Multigrid : noncopyable {
     T bordervalue;
     my_zero(bordervalue);
     // Easy inside part [0, dims / 2 - 1]:
-    parallel_for_coords(
-        dims / 2,
-        [&](const Vec<int, D>& u) {
-          T v;
-          my_zero(v);
-          for (const auto& ut : range(u * 2, u * 2 + vrange)) v += grid[ut];
-          ngrid[u] = v * fac;
-        },
-        product(vrange) * 2);
+    parallel_for_coords({uint64_t(product(vrange)) * 2}, dims / 2, [&](const Vec<int, D>& u) {
+      T v;
+      my_zero(v);
+      for (const auto& ut : range(u * 2, u * 2 + vrange)) v += grid[ut];
+      ngrid[u] = v * fac;
+    });
     // The optional D leftover hyperplanes [dims / 2, ndims - 1] for odd sizes
     Vec<Bndrule, D> bndrules;
-    for_int(d, D) {  // emperically, I found this boundary rule to behave well
+    for_int(d, D) {  // These boundary rules were chosen because they behave well empirically.
       bndrules[d] = (_periodic(d)                             ? Bndrule::border
                      : largest_odd_size >= largest_other_size ? Bndrule::border
                                                               : Bndrule::reflected);
@@ -237,7 +231,7 @@ class Multigrid : noncopyable {
     return ngrid;
   }
   Grid<D, T> dual_downsample_aux(Specialize<2>, CGridView<D, T> grid) {
-    HH_MULTIGRID_TIMER(_downsample2);
+    HH_MULTIGRID_TIMER("_downsample2");
     const Vec<int, D> dims = grid.dims();
     assertx(max(dims) > 1);
     const Vec<int, D> ndims = (dims + 1) / 2;
@@ -254,18 +248,13 @@ class Multigrid : noncopyable {
         if (dims[0] % 2 == 1) ngrid[ndims[0] - 1][x] = grid[(ndims[0] - 1) * 2][x] * 1.f;  // .5f or 1.f; don't care
       }
     } else {
-      // Note: bug in VS2015 update 1 - x64 DebugMD due to OpenMP;
-      //  Multigrid_test; ngrid.dims=[17, 17] but appears as [0, 17] within loop.
-      parallel_for_each(
-          range(dims[0] / 2),
-          [&](const int y) {
-            for_int(x, dims[1] / 2) {
-              ngrid[y][x] = ((grid[y * 2 + 0][x * 2 + 0] + grid[y * 2 + 0][x * 2 + 1] + grid[y * 2 + 1][x * 2 + 0] +
-                              grid[y * 2 + 1][x * 2 + 1]) *
-                             .25f);
-            }
-          },
-          dims[1] * 4);
+      parallel_for_each({uint64_t(dims[1]) * 4}, range(dims[0] / 2), [&](const int y) {
+        for_int(x, dims[1] / 2) {
+          ngrid[y][x] = ((grid[y * 2 + 0][x * 2 + 0] + grid[y * 2 + 0][x * 2 + 1] + grid[y * 2 + 1][x * 2 + 0] +
+                          grid[y * 2 + 1][x * 2 + 1]) *
+                         .25f);
+        }
+      });
       if (dims[0] % 2 == 1) {
         int y = ndims[0] - 1;
         float fac = dims[0] >= dims[1] ? .25f : .5f;  // border-zero or reflected
@@ -288,7 +277,7 @@ class Multigrid : noncopyable {
     return dual_upsample_aux(Specialize<Z>{}, grid, destdims);
   }
   template <int DD> Grid<D, T> dual_upsample_aux(Specialize<DD>, CGridView<D, T> grid, const Vec<int, D>* destdims) {
-    HH_MULTIGRID_TIMER(_upsample);
+    HH_MULTIGRID_TIMER("_upsample");
     const Vec<int, D> dims = grid.dims();
     const Vec<int, D> ndims = destdims ? *destdims : dims * 2;
     if (0) SHOW(dims, ndims);
@@ -300,15 +289,16 @@ class Multigrid : noncopyable {
     return ngrid;
   }
   Grid<D, T> dual_upsample_aux(Specialize<2>, CGridView<D, T> grid, const Vec<int, D>* destdims) {
-    HH_MULTIGRID_TIMER(_upsample2);
+    HH_MULTIGRID_TIMER("_upsample2");
     const Vec<int, D> dims = grid.dims();
     const Vec<int, D> ndims = destdims ? *destdims : dims * 2;
     assertx(ndims[0] == dims[0] * 2 || ndims[0] == dims[0] * 2 - 1);
     assertx(ndims[1] == dims[1] * 2 || ndims[1] == dims[1] * 2 - 1);
     Grid<D, T> ngrid(ndims);
     // transpose of box filter: tensor({(1 0), (0 1)})
-    parallel_for_each(
-        range(ndims[0]), [&](const int y) { for_int(x, ndims[1]) ngrid[y][x] = grid[y / 2][x / 2]; }, ndims[1] * 1);
+    parallel_for_each({uint64_t(ndims[1]) * 1}, range(ndims[0]), [&](const int y) {  //
+      for_int(x, ndims[1]) ngrid[y][x] = grid[y / 2][x / 2];
+    });
     return ngrid;
   }
   // Return the Laplacian weight at the given grid resolution.
@@ -334,7 +324,7 @@ class Multigrid : noncopyable {
   }
   template <int DD>
   void relax_aux(Specialize<DD>, CGridView<D, T> grid_rhs, GridView<D, T> grid_result, int niter, bool extra) {
-    HH_MULTIGRID_TIMER(_relax);
+    HH_MULTIGRID_TIMER("_relax");
     assertx(same_size(grid_rhs, grid_result));
     const Vec<int, D> dims = grid_rhs.dims();
     if (product(dims) == 1) {
@@ -344,7 +334,7 @@ class Multigrid : noncopyable {
     const float wL = get_wL(dims), rwLnum = 1.f / ((2.f * D * wL) + _screening_weight);
     // const bool is_finest = same_size(grid_rhs, _grid_rhs);
     // atomic<int64_t> g_nfast{0}, g_nslow{0};
-    auto func_update = [&](const Vec<int, D>& u) {  // Gauss-Seidel update of value at u
+    const auto func_update = [&](const Vec<int, D>& u) {  // Gauss-Seidel update of value at u
       // ++g_nslow;
       T vnei;
       my_zero(vnei);
@@ -371,7 +361,7 @@ class Multigrid : noncopyable {
       grid_result[u] = (vnei - grid_rhs[u]) / vnum;
     };
     const Vec<int, D> ar_interior_offsets = generate_interior_offsets(dims);
-    auto func_update_interior = [&](size_t i) {
+    const auto func_update_interior = [&](size_t i) {
       // added "true &&" to prevent taking a reference to the constexpr
       // added "if (1)" to avoid warnings about unreachable code
       if (1) ASSERTX(true && b_default_metric);
@@ -403,7 +393,7 @@ class Multigrid : noncopyable {
       grid_result.flat(i) = (vnei * wL - grid_rhs.flat(i)) * rwLnum;  // OPT:relax
     };
     for_int(iter, niter) {
-      if (0 || (grid_rhs.size() * 10 < k_omp_thresh && 1)) {
+      if (0 || (grid_rhs.size() * 10 < k_parallel_thresh && 1)) {
         if (1 && b_default_metric) {
           for_coordsL_interior(dims, ntimes<D>(0), dims, func_update, func_update_interior);
         } else {
@@ -417,8 +407,7 @@ class Multigrid : noncopyable {
         {                                                 // hypercolumn dimensions
           const int L2_cache_size = 4 * 1024 * 1024 / 8;  // conservatively assume 4 MiB shared among 8 threads
           const int num_grids = 3 + 1, fudge = 4;         // 3 rows of grid_result, grid_rhs, plus some extra
-          const int col_width = static_cast<int>(
-              pow(static_cast<float>(L2_cache_size / sizeof(T)) / (num_grids + fudge), 1.f / (D - 1.0001f)));
+          const int col_width = int(pow(float(L2_cache_size / sizeof(T)) / (num_grids + fudge), 1.f / (D - 1.0001f)));
           col_dims = ntimes<D>(col_width).with(0, std::numeric_limits<int>::max());
         }
         // even-odd in just first dimension
@@ -431,7 +420,7 @@ class Multigrid : noncopyable {
         const bool local_iter = true;
         for (const auto& eo : range(even_odd)) {  // { 0|1, 0, 0, ... }
           // SHOW(eo);
-          auto func_relax_column = [&](const Vec<int, D>& coli) {
+          const auto func_relax_column = [&](const Vec<int, D>& coli) {
             Vec<int, D> uL = general_clamp((coli * even_odd + eo + 0) * col_dims - voverlap, ntimes<D>(0), dims);
             Vec<int, D> uU = general_clamp((coli * even_odd + eo + 1) * col_dims + voverlap, ntimes<D>(0), dims);
             // { std::lock_guard<std::mutex> lock(s_mutex); SHOW(dims, uL, uU); }
@@ -447,7 +436,7 @@ class Multigrid : noncopyable {
         const int sync_rows = 1;  // rows per chunk to omit in first pass to avoid synchronization issues
         int dim0 = dims[0], d0chunk = max((dims[0] - 1) / nthreads + 1, sync_rows * 2);
         nthreads = (dim0 + d0chunk - 1) / d0chunk;
-        parallel_for_each(range(nthreads), [&](const int thread) {  // k_omp_thresh already tested above
+        parallel_for_each(range(nthreads), [&](const int thread) {  // k_parallel_thresh already tested above
           const Vec<int, D> uL = ntimes<D>(0).with(0, thread * d0chunk);
           const Vec<int, D> uU = dims.with(0, min((thread + 1) * d0chunk, dim0) - sync_rows);
           if (1 && b_default_metric) {
@@ -472,7 +461,7 @@ class Multigrid : noncopyable {
       }
     }
     if (extra && 1) {  // perform additional relaxations near ends of dimensions with odd sizes
-      // I tried custom relaxation kernels near end boundaries but it did not work.
+      // We also tried using custom relaxation kernels near end boundaries but it did not work well.
       for_int(iter, 3) {
         int extra_niter = 30, extra_size = 6;
         if (D == 3) {  // reduce computational cost on Video
@@ -496,12 +485,12 @@ class Multigrid : noncopyable {
     // SHOW(g_nfast, g_nslow);
   }
   void relax_aux(Specialize<2>, CGridView<D, T> grid_rhs, GridView<D, T> grid_result, int niter, bool extra) {
-    HH_MULTIGRID_TIMER(_relax2);
+    HH_MULTIGRID_TIMER("_relax2");
     assertx(same_size(grid_rhs, grid_result));
     const Vec<int, D> dims = grid_rhs.dims();
     int ny = dims[0], nx = dims[1];
     const float wL = get_wL(dims), rwL4 = 1.f / (4.f * wL + _screening_weight);
-    auto func_update = [&](int y, int x) {
+    const auto func_update = [&](int y, int x) {
       T vnei;
       my_zero(vnei);
       float w, vnum = _screening_weight;  // or 0.f
@@ -537,7 +526,7 @@ class Multigrid : noncopyable {
       }
       grid_result[y][x] = (vnei - grid_rhs[y][x]) / vnum;
     };
-    auto func_update_interior = [&](int y, int x) {
+    const auto func_update_interior = [&](int y, int x) {
       if (1) ASSERTX(true && b_default_metric);
       grid_result[y][x] = (((grid_result[y - 1][x + 0] + grid_result[y + 1][x + 0] + grid_result[y + 0][x - 1] +
                              grid_result[y + 0][x + 1]) *
@@ -546,7 +535,7 @@ class Multigrid : noncopyable {
                            rwL4);  // OPT:relax2
     };
     for_int(iter, niter) {
-      if (0 || (grid_rhs.size() * 10 < k_omp_thresh && 1)) {  // simple sequential version
+      if (0 || (grid_rhs.size() * 10 < k_parallel_thresh && 1)) {  // simple sequential version
         for_int(y, ny) for_int(x, nx) func_update(y, x);
       } else {  // two-stage row-based synchronization to preserve determinism
         int nthreads = get_max_threads();
@@ -564,14 +553,11 @@ class Multigrid : noncopyable {
           // mingw 4096 4096: for_intL: 0.58 sec* for_2DL_interior: 0.64 sec  for_2DL: 0.83 sec
           // win   4096 4096: for_intL: 1.84 sec  for_2DL_interior: 1.19 sec* for_2DL: 1.83 sec
         });
-        parallel_for_each(
-            range(nthreads),
-            [&](const int thread) {
-              const int overlap = 0;  // = {1, 2} does not seem to help much over = 0.
-              int y0 = min((thread + 1) * ychunk, ny) - sync_rows, yn = min((thread + 1) * ychunk + overlap, ny);
-              for_2DL(y0, yn, 0, nx, func_update);
-            },
-            nx * size_t{sync_rows} * 10 / nthreads);
+        parallel_for_each({uint64_t(nx * size_t{sync_rows} * 10 / nthreads)}, range(nthreads), [&](const int thread) {
+          const int overlap = 0;  // = {1, 2} does not seem to help much over = 0.
+          int y0 = min((thread + 1) * ychunk, ny) - sync_rows, yn = min((thread + 1) * ychunk + overlap, ny);
+          for_2DL(y0, yn, 0, nx, func_update);
+        });
       }
       if (extra && 1) {  // perform additional relaxations near ends of dimensions with odd sizes
         const int extra_niter = 30;
@@ -583,7 +569,7 @@ class Multigrid : noncopyable {
       }
     }
   }
-  // I implemented the specialization relax_aux(Specialize<1>, ...) but it was not any faster for mingw 4.8.1
+  // Tried implementing the specialization relax_aux(Specialize<1>, ...) but it was no faster for mingw 4.8.1.
   //
   // Compute the residual of the Laplacian:  grid_rhs - Laplacian * grid_result .
   Grid<D, T> compute_residual(CGridView<D, T> grid_rhs, CGridView<D, T> grid_result) {
@@ -591,12 +577,12 @@ class Multigrid : noncopyable {
   }
   template <int DD>
   Grid<D, T> compute_residual_aux(Specialize<DD>, CGridView<D, T> grid_rhs, CGridView<D, T> grid_result) {
-    HH_MULTIGRID_TIMER(_compute_residual);
+    HH_MULTIGRID_TIMER("_compute_residual");
     assertx(same_size(grid_rhs, grid_result));
     const Vec<int, D> dims = grid_rhs.dims();
     const float wL = get_wL(dims);
     Grid<D, T> grid_residual(dims);
-    auto func = [&](const Vec<int, D>& u) {
+    const auto func = [&](const Vec<int, D>& u) {
       T vnei;
       my_zero(vnei);
       float vnum = _screening_weight;  // or 0.f
@@ -621,7 +607,7 @@ class Multigrid : noncopyable {
       grid_residual[u] = grid_rhs[u] - (vnei - vnum * grid_result[u]);  // residual of Laplacian
     };
     const Vec<int, D> ar_interior_offsets = generate_interior_offsets(dims);
-    auto func_interior = [&](size_t i) {
+    const auto func_interior = [&](size_t i) {
       if (1) ASSERTX(true && b_default_metric);
       T vnei;
       my_zero(vnei);
@@ -640,7 +626,7 @@ class Multigrid : noncopyable {
           int o = ar_interior_offsets[2];
           vnei += grid_result.flat(i + o) + grid_result.flat(i - o);
         }
-        static_assert(D <= 3, "");
+        static_assert(D <= 3);
       }
       float vnum = _screening_weight + wL * (2.f * D);
       grid_residual.flat(i) = grid_rhs.flat(i) - (wL * vnei - vnum * grid_result.flat(i));  // OPT:resid
@@ -655,13 +641,13 @@ class Multigrid : noncopyable {
     return grid_residual;
   }
   Grid<D, T> compute_residual_aux(Specialize<2>, CGridView<D, T> grid_rhs, CGridView<D, T> grid_result) {
-    HH_MULTIGRID_TIMER(_compute_residual2);
+    HH_MULTIGRID_TIMER("_compute_residual2");
     assertx(same_size(grid_rhs, grid_result));
     const Vec<int, D> dims = grid_rhs.dims();
     int ny = dims[0], nx = dims[1];
     const float wL = get_wL(dims), wL4 = (_screening_weight + wL * 4.f);
     Grid<D, T> grid_residual(dims);
-    auto func = [&](int y, int x) {
+    const auto func = [&](int y, int x) {
       T vnei;
       my_zero(vnei);
       float w, vnum = _screening_weight;  // or 0.f
@@ -697,7 +683,7 @@ class Multigrid : noncopyable {
       }
       grid_residual[y][x] = grid_rhs[y][x] - (vnei - vnum * grid_result[y][x]);
     };
-    auto func_interior = [grid_result, wL, wL4, grid_rhs, &grid_residual](int y, int x) {
+    const auto func_interior = [grid_result, wL, wL4, grid_rhs, &grid_residual](int y, int x) {
       if (1) ASSERTX(true && b_default_metric);
       T vnei = (grid_result[y - 1][x + 0] + grid_result[y + 1][x + 0] + grid_result[y + 0][x - 1] +
                 grid_result[y + 0][x + 1]);
@@ -706,9 +692,7 @@ class Multigrid : noncopyable {
     dummy_use(func_interior);
     // VS2012: does not inline lambda in any case; all similar; first choice is slightly better.
     // gcc4.8.1: always produces good code (even creating func_interior() automatically).
-    if (1)
-      parallel_for_each(
-          range(ny), [&](const int y) { for_int(x, nx) func(y, x); }, nx * 10);
+    if (1) parallel_for_each({uint64_t(nx) * 10}, range(ny), [&](const int y) { for_int(x, nx) func(y, x); });
     if (0) parallel_for_2DL(0, ny, 0, nx, func);
     if (0) parallel_for_2DL_interior(0, ny, 0, nx, func, func_interior);
     return grid_residual;
@@ -721,7 +705,7 @@ class Multigrid : noncopyable {
   }
   // Print statistics at each V-cycle iteration, including error if the exact original solution is known.
   void analyze_error(string s) {
-    HH_MULTIGRID_TIMER(_analyze);
+    HH_MULTIGRID_TIMER("_analyze");
     // Stat stat(s, true); stat.set_rms(); for (auto e : grid_result - _grid_orig) stat.enter(mag_e(e));
     Precise mean_result = mean(_grid_result);
     double rms_resid = mag_e(rms(compute_residual(_grid_rhs, _grid_result)));
@@ -731,8 +715,8 @@ class Multigrid : noncopyable {
         (!have_orig() ? 0
                       : max_e(max_abs_element(_grid_result - _grid_orig + static_cast<T>(_mean_orig - mean_result))));
     string smean_off = !_have_mean_desired ? "" : sform(" smean_off=%-12g", mag_e(mean_result - _mean_desired));
-    showf("%9s: mean=%-12g%s rms_resid=%-12g rms_e=%-12g max_e=%g\n", s.c_str(), mag_e(mean_result), smean_off.c_str(),
-          rms_resid, rms_err, max_abs_err);
+    showf("%9s: mean=%-12g%s rms_resid=%-12g rms_e=%-12g max_e=%g\n",  //
+          s.c_str(), mag_e(mean_result), smean_off.c_str(), rms_resid, rms_err, max_abs_err);
   }
   bool coarse_enough(CGridView<D, T> grid_rhs) { return max(grid_rhs.dims()) <= k_direct_solver_resolution; }
   // Recursively perform a multigrid V-cyce.
@@ -760,21 +744,21 @@ class Multigrid : noncopyable {
     for_int(k, num_recursions) rec_vcycle(grid_newrhs, grid_newresult);
     Grid<D, T> grid_correction = dual_upsample(grid_newresult, &grid_result.dims());
     {
-      HH_MULTIGRID_TIMER(_add_correction);
+      HH_MULTIGRID_TIMER("_add_correction");
       grid_result += grid_correction;
     }
     double rms2 = vverbose ? mag_e(rms(compute_residual(grid_rhs, grid_result))) : 0.;
     relax(grid_rhs, grid_result, k_num_iter_gauss_seidel, true);
     double rms3 = vverbose ? mag_e(rms(compute_residual(grid_rhs, grid_result))) : 0.;
     if (vverbose)
-      showf(" resy=%-7d  rms0=%-12.7e rms1=%-12.7e   rms2=%-12.7e rms3=%-12.7e\n", grid_rhs.dim(0), rms0, rms1, rms2,
-            rms3);
+      showf(" resy=%-7d  rms0=%-12.7e rms1=%-12.7e   rms2=%-12.7e rms3=%-12.7e\n",  //
+            grid_rhs.dim(0), rms0, rms1, rms2, rms3);
   }
   // Perform a sequence of multigrid V-cycles.
   void run_multigrid(CGridView<D, T> grid_rhs, GridView<D, T> grid_result) {
-    HH_MULTIGRID_TIMER(multigrid);
+    HH_MULTIGRID_TIMER("multigrid");
     assertx(same_size(grid_rhs, grid_result));
-    // TODO: implement a streaming multigrid algorithm (faster and less memory usage)
+    // TODO: Implement a streaming multigrid algorithm (faster and less memory usage).
     if (getenv_bool("MULTIGRID_VERBOSE")) _verbose = true;
     bool is_power_of_2 = true;
     for_int(c, D) {
@@ -784,7 +768,7 @@ class Multigrid : noncopyable {
     if (!_num_vcycles) _num_vcycles = k_default_num_vcycles;
     for_int(vcycle, _num_vcycles) {
       {
-        HH_MULTIGRID_TIMER(vcycle);
+        HH_MULTIGRID_TIMER("vcycle");
         rec_vcycle(grid_rhs, grid_result);
       }
       if (0) grid_result -= static_cast<T>(mean(grid_result));  // does not help reducing rms(err)

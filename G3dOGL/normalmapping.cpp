@@ -1,26 +1,27 @@
 // -*- C++ -*-  Copyright (c) Microsoft Corporation; see license.txt
-#include <memory>  // _WIN32 bug: must appear before <mutex> to avoid warning 4548
-#include <mutex>   // std::once_flag, std::call_once()
+#include <mutex>  // once_flag, call_once()
 
-#include "HW.h"
+#include "Hw.h"
 #include "libHh/Array.h"
 #include "libHh/Image.h"
 #include "libHh/StringOp.h"
 #include "normalmapping.h"
 
-// (setenv NORMAL_MAPPING ogl2; G3dOGL ~/data/mesh/buddhaf.nf10000.m -key Dt)
-//  also frag1 nvrc dot3
+// NORMAL_MAPPING=ogl2 G3dOGL ~/data/mesh/buddhaf.nf10000.m -key Dt  # Also: frag1 nvrc dot3.
 
 namespace hh {
 
 static Vec4<float> normalizef(const Vec3<float>& v) { return concat(v * .5f + .5f, V(0.f)); }
 
-struct NormalMapping_ogl2 final : NormalMapping {
+class NormalMapping_ogl2 final : public NormalMapping {
+ public:
   using type = NormalMapping_ogl2;
-  // Great tutorial: http://zach.in.tu-clausthal.de/teaching/cg_literatur/glsl_tutorial/
-  //   "GLSL Tutorial von Lighthouse3D"
+  // Great tutorial: "GLSL Tutorial von Lighthouse3D"
+  // https://web.archive.org/web/20170204132401/http://zach.in.tu-clausthal.de/teaching/cg_literatur/glsl_tutorial/
+
   string name() const override { return "ogl2"; }
   bool is_supported() const override { return assertx(glGetString(GL_VERSION))[0] >= '2'; }
+
   void init() override {
     USE_GL_EXT(glCreateShader, PFNGLCREATESHADERPROC);
     USE_GL_EXT(glShaderSource, PFNGLSHADERSOURCEPROC);
@@ -78,87 +79,92 @@ struct NormalMapping_ogl2 final : NormalMapping {
     assertx(glIsProgram(program_id));
     assertx(!gl_report_errors());
   }
+
   void set_parameters(const Vector& lightdirmodel, const Vector& eyedirmodel, float ambient, float lightsource,
                       const Pixel& meshcolor_s) override {
-    Vector vhalf = ok_normalized(lightdirmodel + eyedirmodel);
-    Vector scaled_light = lightdirmodel * lightsource;
-    // just pull the Red channel out; (default is gray 0.5f)
-    float meshspecular = meshcolor_s[0] / 255.f;
-    assertw(meshcolor_s[0] == meshcolor_s[1]);
-    assertw(meshcolor_s[0] == meshcolor_s[2]);
-    const int phong = 4;
-    Vector scaled_vhalf = vhalf * pow(lightsource * meshspecular, 1.f / phong);
+    dummy_use(meshcolor_s);
     USE_GL_EXT(glUseProgram, PFNGLUSEPROGRAMPROC);
-    USE_GL_EXT(glGetUniformLocation, PFNGLGETUNIFORMLOCATIONPROC);
     USE_GL_EXT(glUniform3fv, PFNGLUNIFORM3FVPROC);
     USE_GL_EXT(glUniform1fv, PFNGLUNIFORM1FVPROC);
+    USE_GL_EXT(glUniform1iv, PFNGLUNIFORM1IVPROC);
     glUseProgram(program_id);
-    GLint loc_vlight = glGetUniformLocation(program_id, "vlight");
-    assertx(loc_vlight >= 0);
-    GLint loc_vhalf = glGetUniformLocation(program_id, "vhalf");
-    assertx(loc_vhalf >= 0);
-    GLint loc_ambient = glGetUniformLocation(program_id, "ambient");
-    assertx(loc_ambient >= 0);
-    glUniform3fv(loc_vlight, 1, scaled_light.data());
-    glUniform3fv(loc_vhalf, 1, scaled_vhalf.data());
-    glUniform1fv(loc_ambient, 1, V(ambient).data());
+    glUniform3fv(get_loc("lightdirmodel"), 1, lightdirmodel.data());
+    glUniform3fv(get_loc("eyedirmodel"), 1, eyedirmodel.data());
+    glUniform1fv(get_loc("ambient"), 1, V(ambient).data());
+    glUniform1fv(get_loc("lightsource"), 1, V(lightsource).data());
+    glUniform1iv(get_loc("twolights"), 1, V(getenv_int("G3D_TWOLIGHTS")).data());
     assertx(!gl_report_errors());
   }
+
   void activate() override {
     USE_GL_EXT(glUseProgram, PFNGLUSEPROGRAMPROC);
     glUseProgram(program_id);
     assertx(!gl_report_errors());
   }
+
   void deactivate() override {
     USE_GL_EXT(glUseProgram, PFNGLUSEPROGRAMPROC);
     glUseProgram(0);  // go back to fixed-function pipeline; see https://www.opengl.org/sdk/docs/man2/
-    // and http://stackoverflow.com/questions/13546461/what-does-gluseprogram0-do
+    // and https://stackoverflow.com/questions/13546461/what-does-gluseprogram0-do
     assertx(!gl_report_errors());
     // glDetachShader(program_id, fragment_shader_id);
     // glDeleteShader(fragment_shader_id);
     // glDeleteProgram(program_id);
   }
-  //
-  GLuint program_id;
-  GLuint fragment_shader_id;
-  const string unused_vertex_shader = &R"(
-        void main() {
-            gl_TexCoord[0] = gl_MultiTexCoord0;
-            gl_Position = ftransform();
-        }
-    )"[1];
-  const string fragment_shader = &R"(
-        uniform vec3 vlight;
-        uniform vec3 vhalf;
-        uniform float ambient;
 
-        uniform sampler2D tex;
-
-        varying vec3 tc;                // texture coordinates
-        // varying vec4 color;             // incoming fragment primary color
-
-        void main() {
-            // gl_FragColor = vec4(gl_TexCoord[0].st, 0., 1.); return;
-            vec3 vnorm = texture(tex, gl_TexCoord[0].st).xyz * 2. - 1.;  // texture.stpq
-            vnorm = normalize(vnorm);
-            if (0) { gl_FragColor = vec4(vnorm.xyz, 1.); return; }
-            float vdot = max(0., dot(vnorm, vhalf));
-            float adjustment1 = 1.2, adjustment2 = 1.4;
-            gl_FragColor = (gl_FrontMaterial.diffuse * (ambient + adjustment1 * max(0., dot(vnorm, vlight))) +
-                            gl_FrontMaterial.specular * adjustment2 * pow(vdot, 4.));
-            gl_FragColor.a = 1.;
-        }
-    )"[1];
   static type& instance() {
     static type& f = *new type;
     return f;
   }
+
+ private:
+  GLuint program_id;
+  GLuint fragment_shader_id;
+  GLint get_loc(const char* name) const {
+    USE_GL_EXT(glGetUniformLocation, PFNGLGETUNIFORMLOCATIONPROC);
+    GLint loc = glGetUniformLocation(program_id, name);
+    assertx(loc >= 0);
+    return loc;
+  }
+  const string unused_vertex_shader = R"(#version 120  // Using GLSL version 1.20.
+    void main() {
+      gl_TexCoord[0] = gl_MultiTexCoord0;
+      gl_Position = ftransform();
+    }
+    )";
+  const string fragment_shader = R"(#version 120  // Using GLSL version 1.20.
+    uniform vec3 lightdirmodel;
+    uniform vec3 eyedirmodel;
+    uniform float ambient;
+    uniform float lightsource;
+    uniform int twolights;
+
+    uniform sampler2D tex;
+
+    void main() {
+      const float phong = 4.;
+      // gl_FragColor = vec4(gl_TexCoord[0].st, 0., 1.); return;
+      vec3 vnorm = texture2D(tex, gl_TexCoord[0].st).xyz * 2. - 1.;  // texture.stpq
+      vnorm = normalize(vnorm);
+      if (twolights > 0 && dot(vnorm, lightdirmodel) < 0.) vnorm = -vnorm;
+      if (false) { gl_FragColor = vec4(vnorm.xyz, 1.); return; }
+      float vdot1 = max(0., dot(vnorm, lightdirmodel) * lightsource);
+      vec3 vhalf = normalize(lightdirmodel + eyedirmodel);
+      float vdot2 = max(0., dot(vnorm, vhalf));
+      gl_FragColor.rgb = (gl_FrontMaterial.diffuse.rgb * (ambient + vdot1) +
+                          gl_FrontMaterial.specular.rgb * pow(vdot2, phong) * lightsource);
+      gl_FragColor.a = 1.;
+    }
+    )";
 };
 
-struct NormalMapping_frag1 final : NormalMapping {
+class NormalMapping_frag1 final : public NormalMapping {
+ public:
   using type = NormalMapping_frag1;
+
   string name() const override { return "frag1"; }
   bool is_supported() const override { return contains(gl_extensions_string(), "GL_ARB_fragment_program"); }
+
   void init() override {
     USE_GL_EXT(glGenProgramsARB, PFNGLGENPROGRAMSARBPROC);
     USE_GL_EXT(glBindProgramARB, PFNGLBINDPROGRAMARBPROC);
@@ -182,6 +188,7 @@ struct NormalMapping_frag1 final : NormalMapping {
     assertx(glIsProgramARB(program_id));
     assertx(!gl_report_errors());
   }
+
   void set_parameters(const Vector& lightdirmodel, const Vector& eyedirmodel, float ambient, float lightsource,
                       const Pixel& meshcolor_s) override {
     Vector vhalf = ok_normalized(lightdirmodel + eyedirmodel);
@@ -204,24 +211,32 @@ struct NormalMapping_frag1 final : NormalMapping {
     glProgramLocalParameter4fvARB(GL_FRAGMENT_PROGRAM_ARB, 1, vhalf2.data());
     assertx(!gl_report_errors());
   }
+
   void activate() override {
     USE_GL_EXT(glBindProgramARB, PFNGLBINDPROGRAMARBPROC);
     glEnable(GL_FRAGMENT_PROGRAM_ARB);
     glBindProgramARB(GL_FRAGMENT_PROGRAM_ARB, program_id);
     assertx(!gl_report_errors());
   }
+
   void deactivate() override {
     glDisable(GL_FRAGMENT_PROGRAM_ARB);
     // glDeleteProgramsARB(1, &program_id);
     assertx(!gl_report_errors());
   }
-  //
+
+  static type& instance() {
+    static type& f = *new type;
+    return f;
+  }
+
+ private:
   GLuint program_id;
   // Unfortunately, C++ preprocessor does not like the '#' comment character as first non-whitespace.
   // # OPTION ARB_precision_hint_fastest;
   // # PARAM  vhalf = { 0.5, 0.5, 0.5, 0.5 };
   // # OUTPUT oCol = result.color;
-  // http://en.wikipedia.org/wiki/ARB_assembly_language
+  // https://en.wikipedia.org/wiki/ARB_assembly_language
   // https://www.opengl.org/registry/specs/ARB/fragment_program.txt
   const string fragment_shader = R"(!!ARBfp1.0
         TEMP    norm, light, vhalf, ndotl, ndoth, diffuse;
@@ -248,14 +263,10 @@ struct NormalMapping_frag1 final : NormalMapping {
         MOV     result.color.a, 1.;
         END
     )";
-  static type& instance() {
-    static type& f = *new type;
-    return f;
-  }
 };
 
 // *** ENV_DOT3 extension
-// http://www.ati.com/developer/sdk/RadeonSDK/Html/Samples/OpenGL/RadeonSimpleDOT3.html
+// http://www.ati.com/developer/sdk/RadeonSDK/Html/Samples/OpenGL/RadeonSimpleDOT3.html [deleted]
 // The main difference between the texture_env_* extension and the combiners is
 // that the combiners replace the entire fragment pipeline, while the
 // texture_env_* extensions only extend it. So the texture_env_dot3 extension
@@ -263,9 +274,12 @@ struct NormalMapping_frag1 final : NormalMapping {
 // DOT3_RGB_EXT                    Arg0 <dotprod> Arg1
 // (this is just like MODULATE or REPLACE)
 // where arg0 and arg1 are: PRIMARY_COLOR_EXT, TEXTURE, CONSTANT_EXT or PREVIOUS_EXT.
-struct NormalMapping_dot3 final : NormalMapping {
+class NormalMapping_dot3 final : public NormalMapping {
+ public:
   using type = NormalMapping_dot3;
+
   string name() const override { return "dot3"; }
+
   bool is_supported() const override {
     if (!contains(gl_extensions_string(), "GL_ARB_texture_env_dot3")) return false;
     GLint max_texture_units;
@@ -274,11 +288,11 @@ struct NormalMapping_dot3 final : NormalMapping {
     if (max_texture_units < 2) return false;
     return true;
   }
+
   void init() override {
     USE_GL_EXT(glActiveTextureARB, PFNGLACTIVETEXTUREARBPROC);
-    // Note, that you are not using the second tmu, only the second combiner,
-    // but you have to enable the tmu and set a valid configuration.
-    // I usually bind a tiny white texture.
+    // Even though we are not using the second tmu, only the second combiner, we must still enable the tmu and set
+    // a valid configuration.  We usually bind a tiny white texture.
     {
       glActiveTextureARB(GL_TEXTURE1_ARB);
       glEnable(GL_TEXTURE_2D);
@@ -286,9 +300,9 @@ struct NormalMapping_dot3 final : NormalMapping {
       glMatrixMode(GL_TEXTURE);
       glLoadIdentity();
       glMatrixMode(GL_MODELVIEW);
-      GLuint texname1;
-      glGenTextures(1, &texname1);
-      glBindTexture(GL_TEXTURE_2D, texname1);
+      GLuint texture_name1;
+      glGenTextures(1, &texture_name1);
+      glBindTexture(GL_TEXTURE_2D, texture_name1);
       Image itexture(V(2, 2), Pixel::black());
       int level = 0, border = 0;
       GLenum internal_format = GL_RGBA8;
@@ -329,6 +343,7 @@ struct NormalMapping_dot3 final : NormalMapping {
     //
     glActiveTextureARB(GL_TEXTURE0_ARB);
   }
+
   void set_parameters(const Vector& lightdirmodel, const Vector& eyedirmodel, float ambient, float lightsource,
                       const Pixel& meshcolor_s) override {
     dummy_use(eyedirmodel, ambient, meshcolor_s);
@@ -336,18 +351,23 @@ struct NormalMapping_dot3 final : NormalMapping {
     Vec4<float> light2 = normalizef(dot3_scaled_light);
     glTexEnvfv(GL_TEXTURE_ENV, GL_TEXTURE_ENV_COLOR, light2.data());
   }
+
   void activate() override { glDisable(GL_BLEND); }
   void deactivate() override { glEnable(GL_BLEND); }
+
   static type& instance() {
     static type& f = *new type;
     return f;
   }
 };
 
-struct NormalMapping_nvrc final : NormalMapping {
+class NormalMapping_nvrc final : public NormalMapping {
+ public:
   using type = NormalMapping_nvrc;
+
   string name() const override { return "nvrc"; }
   bool is_supported() const override { return contains(gl_extensions_string(), "GL_NV_register_combiners"); }
+
   void init() override {
     USE_GL_EXT(glCombinerParameteriNV, PFNGLCOMBINERPARAMETERINVPROC);
     USE_GL_EXT(glCombinerInputNV, PFNGLCOMBINERINPUTNVPROC);
@@ -410,6 +430,7 @@ struct NormalMapping_nvrc final : NormalMapping {
     // replace diffuse term by ambient:
     // glFinalCombinerInputNV(GL_VARIABLE_D_NV, GL_CONSTANT_COLOR1_NV, GL_UNSIGNED_IDENTITY_NV, GL_RGB);
   }
+
   void set_parameters(const Vector& lightdirmodel, const Vector& eyedirmodel, float ambient, float lightsource,
                       const Pixel& meshcolor_s) override {
     Vector vhalf = ok_normalized(lightdirmodel + eyedirmodel);
@@ -431,14 +452,17 @@ struct NormalMapping_nvrc final : NormalMapping {
     Vec4<float> vhalf2 = normalizef(scaled_vhalf);
     glCombinerParameterfvNV(GL_CONSTANT_COLOR1_NV, vhalf2.data());
   }
+
   void activate() override {
     // const int GL_REGISTER_COMBINERS_NV = 0x8522;
     glEnable(GL_REGISTER_COMBINERS_NV);
   }
+
   void deactivate() override {
     // const int GL_REGISTER_COMBINERS_NV = 0x8522;
     glDisable(GL_REGISTER_COMBINERS_NV);
   }
+
   static type& instance() {
     static type& f = *new type;
     return f;
@@ -448,18 +472,18 @@ struct NormalMapping_nvrc final : NormalMapping {
 NormalMapping* NormalMapping::get() {
   static Array<NormalMapping*> normalmappings;
   static std::once_flag flag;
-  std::call_once(flag, [] {
+  const auto initialize_normalmappings = [] {
     normalmappings.push(&NormalMapping_ogl2::instance());
     normalmappings.push(&NormalMapping_frag1::instance());
     normalmappings.push(&NormalMapping_nvrc::instance());
     normalmappings.push(&NormalMapping_dot3::instance());
-  });
+  };
+  std::call_once(flag, initialize_normalmappings);
   assertx(normalmappings.num());
   string desired_name = getenv_string("NORMAL_MAPPING");
   for (NormalMapping* normalmapping : normalmappings) {
-    string fname = normalmapping->name();
     if (desired_name != "") {
-      if (fname == desired_name) {
+      if (normalmapping->name() == desired_name) {
         assertx(normalmapping->is_supported());
         return normalmapping;
       }

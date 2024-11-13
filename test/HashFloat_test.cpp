@@ -1,7 +1,7 @@
 // -*- C++ -*-  Copyright (c) Microsoft Corporation; see license.txt
 #include "libHh/HashFloat.h"
 
-#include <iomanip>  // std::setprecision()
+#include <iomanip>  // setprecision()
 
 #include "libHh/ArrayOp.h"  // concat()
 #include "libHh/RangeOp.h"  // sum()
@@ -75,7 +75,7 @@ template <typename T> T roundtrip(T v, int digits = -1) {
   assertx(ss << v);
   T v2;
   if (1) {
-    static_assert(std::is_same<T, float>::value, "");
+    static_assert(std::is_same_v<T, float>);
     assertx(sscanf(ss.str().c_str(), "%f", &v2));
   } else {
     assertx(ss >> v2);
@@ -98,7 +98,7 @@ void test_io() {
   const Array<float> ar1eps = ar * eps + 1.f;
   // 7 digits of precision are insufficient, in either sform("%.7g") or ostream << setprecision(7).
   // 8 digits are mostly sufficient -- e.g. not true of numbers between 1000 and 1024
-  // 1023.9932861328125f from http://randomascii.wordpress.com/2012/02/11/they-sure-look-equal/
+  // 1023.9932861328125f from https://randomascii.wordpress.com/2012/02/11/they-sure-look-equal/
   // printf("%1.8e\n", d);   // Round-trippable float, always with an exponent
   // printf("%.9g\n", d);    // Round-trippable float, shortest possible
   // printf("%1.16e\n", d);  // Round-trippable double, always with an exponent
@@ -107,8 +107,8 @@ void test_io() {
                         V(0.2288884f, 0.228888392f, 0.228888407f).view())) {
     float f2 = roundtrip(f, 9);  // was 7; in principle 9 is required!  (17 is sufficient for double)
     // %a (hexadecimal float) is not supported in mingw which uses old MS CRT
-    showf("f=%-10.7g %-10.8g %-11.9g %x  f2=%-10.7g %-10.8g %-11.9g %x  f==f2=%d\n", f, f, f, as_uint(f), f2, f2, f2,
-          as_uint(f2), f == f2);
+    showf("f=%-10.7g %-10.8g %-11.9g %x  f2=%-10.7g %-10.8g %-11.9g %x  f==f2=%d\n",  //
+          f, f, f, as_uint(f), f2, f2, f2, as_uint(f2), f == f2);
   }
   // 0.2288884f in FrameIO_test.inp:
   //  VC12 writes it as 0.228888392; this seems incorrect -- it is different as shown below

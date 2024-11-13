@@ -9,7 +9,7 @@ namespace hh {
 // Convert between native byte ordering and network byte ordering.
 //
 // Notes:
-// - Network order is Big Endian (MSB first).  I use that for most of my binary files.
+// - Network order is Big Endian (MSB first).  That is the convention used here for all binary files.
 //
 // - Intel_x86 and VAX are Little Endian
 // - RISC is mostly Big Endian.  ARM is both.  All ARM versions of Windows run Little Endian
@@ -18,8 +18,8 @@ namespace hh {
 //  the packet headers and for many higher level protocols and file formats that are designed for use over IP.
 
 // Big Endian is natural for dates/times (2014-12-22 12:34:56).
-// I also use it for grid access (matrix[y][x] == matrix[yx]; matrix.dims() == V(matrix.ysize(), matrix.xsize())) and
-//   for screen coordinates (const Vec2<int>& yx).
+// It is also used for grid access (matrix[y][x] == matrix[yx]; matrix.dims() == V(matrix.ysize(), matrix.xsize()))
+//   and for screen coordinates (const Vec2<int>& yx).
 
 #if defined(__GNUC__) || defined(__clang__)
 
@@ -38,18 +38,18 @@ inline uint16_t swap_2bytes(uint16_t v) { return _byteswap_ushort(v); }
 #else
 
 inline uint64_t swap_8bytes(uint64_t v) {
-  return (((v) >> 56) | ((v & 0x00FF000000000000) >> 40) | ((v & 0x0000FF0000000000) >> 24) |
-          ((v & 0x000000FF00000000) >> 8) | ((v & 0x00000000FF000000) << 8) | ((v & 0x0000000000FF0000) << 24) |
-          ((v & 0x000000000000FF00) << 40) | ((v) << 56));
+  return (((v) >> 56) | ((v & 0x00FF'0000'0000'0000) >> 40) | ((v & 0x0000'FF00'0000'0000) >> 24) |
+          ((v & 0x0000'00FF'0000'0000) >> 8) | ((v & 0x0000'0000'FF00'0000) << 8) |
+          ((v & 0x0000'0000'00FF'0000) << 24) | ((v & 0x0000'0000'0000'FF00) << 40) | ((v) << 56));
 }
 inline uint32_t swap_4bytes(uint32_t v) {
-  return (((v) >> 24) | ((v & 0x00FF0000) >> 8) | ((v & 0x0000FF00) << 8) | ((v) << 24));
+  return (((v) >> 24) | ((v & 0x00FF'0000) >> 8) | ((v & 0x0000'FF00) << 8) | ((v) << 24));
 }
 inline uint16_t swap_2bytes(uint16_t v) { return ((v >> 8) | (v << 8)); }
 
 #endif
 
-// See http://stackoverflow.com/questions/2100331/c-macro-definition-to-determine-big-endian-or-little-endian-machine
+// See https://stackoverflow.com/questions/2100331/c-macro-definition-to-determine-big-endian-or-little-endian-machine
 // #define HH_LITTLE_ENDIAN 0x41424344UL
 // #define HH_BIG_ENDIAN    0x44434241UL
 // #define HH_ENDIAN_ORDER  ('ABCD')  // GCC: error: multi-character character constant [-Werror=multichar]
@@ -60,17 +60,15 @@ inline uint16_t swap_2bytes(uint16_t v) { return ((v >> 8) | (v << 8)); }
 // #define HH_IS_BIG_ENDIAN (1 != *(unsigned char *)&(const int){1})
 #define HH_IS_BIG_ENDIAN (*reinterpret_cast<const uint16_t*>("\0\xff") < 0x100)
 // It does not seem possible to determine endianness in a constexpr:
-//  http://stackoverflow.com/questions/1583791/constexpr-and-endianness
+//  https://stackoverflow.com/questions/1583791/constexpr-and-endianness
 // Update: it is possible in C++20 (https://stackoverflow.com/a/8197886):
 // #include <type_traits>
 // constexpr bool is_big_endian = std::endian::native == std::endian::big;
 
 template <typename T> void my_swap_bytes(T* p) {
-  static_assert(sizeof(T) == 8 || sizeof(T) == 4 || sizeof(T) == 2, "");
-  // The "union" are required for gcc 4.8.1; otherwise it changes value in memory but not in register
-  //  -- see NetworkOrder_test.cpp
-  // I first tried making "T* p" be volatile, but that hit another compiler bug in FrameIO.cpp
-  //  exposed in FrameIO_test.cpp (the zoom variable is incorrect) and A3dStream_test.cpp .
+  static_assert(sizeof(T) == 8 || sizeof(T) == 4 || sizeof(T) == 2);
+  // First attempt was to use "volatile T* p", but that is not robust.  The use of "union" is required for gcc;
+  // otherwise it changes value in memory but not in register -- see NetworkOrder_test.cpp.
   if (sizeof(T) == 8) {
     union {
       uint64_t ui;

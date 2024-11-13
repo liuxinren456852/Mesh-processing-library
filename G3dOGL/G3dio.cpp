@@ -72,7 +72,7 @@ A3dElem::EType read_a3delem(RA3dStream& ia3d) {
       case A3dElem::EType::polygon: total_gons++; break;
       case A3dElem::EType::polyline: total_lines++; break;
       case A3dElem::EType::point: total_points++; break;
-      default: assertnever(string() + "unknown type '" + narrow_cast<char>(elt) + "'");
+      default: assertnever(string("unknown type '") + narrow_cast<char>(elt) + "'");
     }
     for_int(i, el.num()) g_obs[robn].enter_point(el[i].p);
     HB::segment_add_object(el);
@@ -93,40 +93,33 @@ A3dElem::EType read_a3delem(RA3dStream& ia3d) {
   return elt;
 }
 
-void read_mesh_line(char* s) {
-  int fi = 0, vi = 0, vi1 = 0, vi2 = 0, vspl1 = 0, vspl2 = 0, vspl3 = 0, vspl4 = 0;
+void read_mesh_line(char* sline) {
   open_if_closed();
   GMesh& mesh = *g_obs[robn].get_mesh();
-  if (sscanf(s, "Vertex %d", &vi) != 1 && sscanf(s, "MVertex %d", &vi) != 1) vi = 0;
-  if (sscanf(s, "Face %d", &fi) != 1) fi = 0;
-  if (sscanf(s, "Ecol %d %d", &vi1, &vi2) != 2) vi1 = vi2 = 0;
-  if (sscanf(s, "Vspl %d %d %d %d", &vspl1, &vspl2, &vspl3, &vspl4) != 4) vspl1 = vspl2 = vspl3 = vspl4 = 0;
-  mesh.read_line(s);
-  // (Bug: Not all mesh transformations clear vflag_ok, fflag_ok flags)
-  if (vi1) {
-    mesh.flags(mesh.id_vertex(vi1)).flag(vflag_ok) = false;
-    for (Face f : mesh.faces(mesh.id_vertex(vi1))) mesh.flags(f).flag(fflag_ok) = false;
-  }
-  if (vi) {
-    total_vertices++;
-    Vertex v = mesh.id_vertex(vi);
-    g_obs[robn].enter_point(mesh.point(v));
-    mesh.flags(v).flag(vflag_ok) = false;
-    if (GMesh::string_has_key(mesh.get_string(v), "Opos")) {
-      if (!lod_mode) Warning("Entering lod_mode");
-      lod_mode = true;
-      Point po;
-      assertx(parse_key_vec(mesh.get_string(v), "Opos", po));
-      g_obs[robn].enter_point(po);
-    }
-  }
-  if (fi) {
-    total_faces++;
-    Face f = mesh.id_retrieve_face(fi);  // it may not have been created if !legal_create_face()
-    if (f) mesh.flags(f).flag(fflag_ok) = false;
-  }
-  if (vspl1) {
-    mesh.flags(mesh.id_vertex(vspl1)).flag(vflag_ok) = false;
+  mesh.read_line(sline);
+  switch (sline[0]) {
+    case 'V':
+      if (const char* s = after_prefix(sline, "Vertex ")) {
+        const int vi = int_from_chars(s);
+        total_vertices++;
+        Vertex v = mesh.id_vertex(vi);
+        g_obs[robn].enter_point(mesh.point(v));
+        if (GMesh::string_has_key(mesh.get_string(v), "Opos")) {
+          if (!lod_mode && 0) Warning("Entering lod_mode");
+          lod_mode = true;
+          Point po;
+          assertx(parse_key_vec(mesh.get_string(v), "Opos", po));
+          g_obs[robn].enter_point(po);
+        }
+      }
+      break;
+    case 'F':
+      if (const char* s = after_prefix(sline, "Face ")) {
+        dummy_use(s);
+        total_faces++;
+      }
+      break;
+    default: break;
   }
   mesh.gflags().flag(mflag_ok) = false;
 }
@@ -134,19 +127,19 @@ void read_mesh_line(char* s) {
 bool try_g3d_command(const string& pstr) {
   string str = pstr;
   if (0) {
-  } else if (remove_at_beginning(str, "keys ")) {
-    // assertx(str.size() == 1);  // new 20121213
+  } else if (remove_at_start(str, "keys ")) {
+    // assertx(str.size() == 1);  // new 2012-12-13
     // KeyPressed(str);
     for (char ch : str) KeyPressed(string(1, ch));
     return true;
-  } else if (remove_at_beginning(str, "wait ")) {
+  } else if (remove_at_start(str, "wait ")) {
     wait_command = Args::parse_float(str);
     return true;
-  } else if (remove_at_beginning(str, "lod ")) {
+  } else if (remove_at_start(str, "lod ")) {
     float f = Args::parse_float(str);
     HB::escape(reinterpret_cast<void*>(1), &f);
     return true;
-  } else if (remove_at_beginning(str, "screen_thresh ")) {
+  } else if (remove_at_start(str, "screen_thresh ")) {
     float f = Args::parse_float(str);
     HB::escape(reinterpret_cast<void*>(2), &f);
     return true;
@@ -169,7 +162,6 @@ ETryInput try_input(RBuffer& buf, RBufferedA3dStream& ra3d, string& str) {
     buf.extract(1);
     return ETryInput::success;
   }
-  int i;
   // try A3d
   switch (ra3d.recognize()) {
     case RBufferedA3dStream::ERecognize::parse_error: assertnever("");
@@ -190,13 +182,9 @@ ETryInput try_input(RBuffer& buf, RBufferedA3dStream& ra3d, string& str) {
     case FrameIO::ERecognize::parse_error: assertnever("");
     case FrameIO::ERecognize::partial: return ETryInput::nothing;  // partial frame
     case FrameIO::ERecognize::yes: {
-      Frame f;
-      int obn;
-      float z;
-      bool bin;
-      i = FrameIO::read(buf, f, obn, z, bin);
-      if (!assertw(i)) return ETryInput::success;
-      UpdateFrame(obn, f, z);
+      const auto object_frame = assertw(FrameIO::read(buf));
+      if (!object_frame) return ETryInput::success;
+      UpdateFrame(*object_frame);
       num_input_frames++;
       return ETryInput::success;
     }
@@ -206,7 +194,7 @@ ETryInput try_input(RBuffer& buf, RBufferedA3dStream& ra3d, string& str) {
     default: assertnever("");
   }
   if (!buf.extract_line(str)) return ETryInput::nothing;  // partial something
-  // 20121211: now trailing '\n' has been removed; all still OK?
+  // 2012-12-11: now trailing '\n' has been removed; all still OK?
   {  // try Mesh
     char* s = const_cast<char*>(str.c_str());
     if (GMesh::recognize_line(s)) {
@@ -231,9 +219,7 @@ bool read_buffer(RBuffer& buf, RBufferedA3dStream& ra3d, bool during_init) {
         HB::redraw_later();
         cur_needs_redraw = true;
       }
-      if (ret == ETryInput::eof) {
-        return true;
-      }
+      if (ret == ETryInput::eof) return true;
       if (ret == ETryInput::success_frame || wait_command) {  // end of frame
         HB::redraw_later();
         cur_needs_redraw = true;
@@ -275,14 +261,17 @@ void CloseIfOpen() {
   g_obs[robn].update_stats();
   if (!terse) {
     string s = sform("G3d: (%d) File:%s", robn, filename.c_str());
-    if (total_gons + total_lines + total_points) {
+    if (total_gons + total_lines + total_points)
       showf("%s %dgons %dlines %dpts\n", s.c_str(), total_gons, total_lines, total_points);
-    }
     if (total_vertices + total_faces) {
       const GMesh& mesh = *g_obs[robn].get_mesh();
       if (total_vertices == mesh.num_vertices()) {
         showf("%s\n", s.c_str());
-        showf(" %s\n", mesh_genus_string(mesh).c_str());
+        if (mesh.num_vertices() <= 50'000) {  // For speed, only compute on smaller meshes.
+          showf(" %s\n", mesh_genus_string(mesh).c_str());
+        } else {
+          showf(" v=%d f=%d\n", mesh.num_vertices(), mesh.num_faces());
+        }
       } else {
         showf("%s %dv %df\n", s.c_str(), total_vertices, total_faces);
       }
@@ -301,7 +290,7 @@ void ReadFiles(bool during_init) {
     }
     RFile is(filename);
     read_file(HH_POSIX(fileno)(is.cfile()), during_init);
-    if (anglethresh >= 0) RecomputeSharpEdges(*g_obs[robn].get_mesh());
+    if (anglethresh >= 0.f) RecomputeSharpEdges(*g_obs[robn].get_mesh());
     robn++;
   }
   filename = "-";
@@ -333,23 +322,18 @@ void ReadInput(bool during_init) {
 
 void WriteOutput() {
   float z = 0.f;
-  Frame ft;
-  const Frame* t;
-  int obn = eye_move ? obview : cob;
+  Frame frame;
+  const int obn = eye_move ? obview : cob;
   if (g_obs[obn].visible() || obn == obview) {
     if (!obn) z = zoom;
-    t = &g_obs[obn].t();
+    frame = g_obs[obn].t();
   } else {
-    FrameIO::create_not_a_frame(ft);
-    t = &ft;
+    frame = FrameIO::get_not_a_frame();
   }
-  if (!FrameIO::write(std::cout, *t, obn, z, obinary)) {
-#if 1 || defined(_WIN32)
+  if (!FrameIO::write(std::cout, ObjectFrame{frame, obn, z, obinary})) {
     // No SIGPIPE to terminate process in Win32.
-    exit_immediately(0);
-#else
-    Warning("FrameIO::write failed");
-#endif
+    showf("Write failed, maybe due to broken pipe.\n");
+    exit_immediately(1);
   }
   std::cout.flush();
 }

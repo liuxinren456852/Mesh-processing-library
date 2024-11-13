@@ -13,23 +13,23 @@ namespace hh {
 //   most distributions, including floating-point types, is implementation-dependent.)
 class Random : noncopyable {
  public:
-  static Random G;  // can be uninitialized before main()!  any shared Random is not thread-safe.
+  static Random G;  // can be uninitialized before main()!  any shared Random is not threadsafe.
   explicit Random(uint32_t seedv = 0);
   ~Random();
   void seed(uint32_t seedv);
-  unsigned get_unsigned();  // [0, std::numeric_limits<unsigned>::max()]  (4294967295 if sizeof(unsigned) == 4)
-  uint64_t get_uint64();    // [0, std::numeric_limits<uint64_t>::max()]  (18446744073709551615)
-  size_t get_size_t();      // range depends on size_t
+  unsigned get_unsigned();             // [0, std::numeric_limits<unsigned>::max()]
+  uint64_t get_uint64();               // [0, std::numeric_limits<uint64_t>::max()]
+  size_t get_size_t();                 // range depends on size_t
   unsigned get_unsigned(unsigned ub);  // [0, ub - 1]
   float unif();                        // [0.f, 1.f)
   double dunif();                      // [0., 1.)
   float gauss();                       // avg = 0.f, sdv = 1.f
   double dgauss();                     // avg = 0.,  sdv = 1.
   void discard(uint64_t count);
-  // http://en.cppreference.com/w/cpp/concept/UniformRandomNumberGenerator (std::*_engine classes):
+  // https://en.cppreference.com/w/cpp/concept/UniformRandomNumberGenerator (std::*_engine classes):
   using result_type = uint32_t;
   result_type operator()();
-  static_assert(std::is_integral<result_type>::value, "");
+  static_assert(std::is_integral_v<result_type>);
   static constexpr result_type min() { return std::numeric_limits<result_type>::min(); }
   static constexpr result_type max() { return std::numeric_limits<result_type>::max(); }
   static constexpr result_type default_seed = 0;

@@ -109,8 +109,8 @@ class Pool : noncopyable {
     int n = 0;
     for (Link* p = _h; p; p = p->next) n++;
     if (sdebug >= 2 || (sdebug && _nalloc) || n != _nalloc)
-      showf("Pool %-20s: (size %2d) %6d/%-6d elements outstanding%s\n", _name, _esize, _nalloc - n, _nalloc,
-            (n != _nalloc ? " **" : ""));
+      showf("Pool %-20s: (size %2d) %6d/%-6d elements outstanding%s\n",  //
+            _name, _esize, _nalloc - n, _nalloc, (n != _nalloc ? " **" : ""));
     if (n != _nalloc) return;
     for (Chunk* chunk = _chunkh; chunk;) {
       uint8_t* p = reinterpret_cast<uint8_t*>(chunk);
@@ -137,7 +137,7 @@ class Pool : noncopyable {
     _h = p;
   }
   // allocate based on size of first alloc_size() call
-  void* alloc_size(size_t s64, int align) {
+  void* alloc_size(int align, size_t s64) {
     int s = narrow_cast<int>(s64);
     if (!_h) grow_size(s, align);
     Link* p = _h;
@@ -191,7 +191,7 @@ class Pool : noncopyable {
     const int nelem = _offset / _esize;
     assertx(nelem > 0);
     if (sdebug >= 3) showf("Pool %-20s: allocating new chunk\n", _name);
-    char* p = static_cast<char*>(assertx(aligned_malloc(k_chunksize, _ealign)));
+    char* p = static_cast<char*>(assertx(aligned_malloc(_ealign, k_chunksize)));
     Chunk* chunk = reinterpret_cast<Chunk*>(p + _offset);
     chunk->next = _chunkh;
     _chunkh = chunk;

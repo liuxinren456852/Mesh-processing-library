@@ -108,6 +108,7 @@ RCS/
 /test/EList_test
 /test/Encoding_test
 /test/Facedistance_test
+/test/FileIO_test
 /test/FrameIO_test
 /test/GMesh_test
 /test/Geometry_test
@@ -123,7 +124,7 @@ RCS/
 /test/Homogeneous_test
 /test/Image_test
 /test/Kdtree_test
-/test/LLS_test
+/test/Lls_test
 /test/LinearRegression_test
 /test/Locks_test
 /test/Map_test
@@ -137,7 +138,6 @@ RCS/
 /test/NetworkOrder_test
 /test/NonlinearOptimization_test
 /test/PArray_test
-/test/PolygonFaceSpatial_test
 /test/Polygon_test
 /test/Pool_test
 /test/Postscript_test
@@ -157,6 +157,7 @@ RCS/
 /test/Stat_test
 /test/StridedArray_test
 /test/Timer_test
+/test/TriangleFaceSpatial_test
 /test/UnionFind_test
 /test/Vec_test
 /test/Vector4_test
@@ -207,3 +208,11 @@ RCS/
 /demos/data/2dvectest.visual_offset.png
 /demos/data/2dvectest.reconstructed.png
 /demos/data/palmtrees_small_loop.mp4
+/demos/data/bunny.vertexcache.m
+/demos/data/bunny.sphparam.m
+/demos/data/octaflat_eg128.uv.sphparam.m
+/demos/data/bunny.spheresample.remesh.m
+/demos/data/bunny.spheresample.octaflat.unrotated.normalmap.png
+/demos/data/bunny.lonlat.unrotated.normalmap.png
+/demos/data/bunny.split_meridian.pm
+/demos/data/cessna.pm

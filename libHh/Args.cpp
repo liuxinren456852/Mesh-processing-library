@@ -1,9 +1,9 @@
 // -*- C++ -*-  Copyright (c) Microsoft Corporation; see license.txt
 #include "libHh/Args.h"
 
-#include <cctype>   // std::isdigit()
-#include <cstdlib>  // atoi()
+#include <cctype>  // isdigit()
 
+#include "libHh/FileIO.h"   // is_pipe(), is_url()
 #include "libHh/RangeOp.h"  // contains()
 #include "libHh/StringOp.h"
 
@@ -13,30 +13,21 @@ namespace {
 
 inline bool convert_bool(const string& s) { return s == "1" || s == "true"; }
 inline char convert_char(const string& s) { return s[0]; }
-inline int convert_int(const string& s) { return atoi(s.c_str()); }             // or stoi(s) or to_int(s.c_str())
-inline float convert_float(const string& s) { return float(atof(s.c_str())); }  // or stof(s)
-inline double convert_double(const string& s) { return atof(s.c_str()); }  // or stod(s) or strtod(s.c_str(), nullptr)
-
 inline string show_bool(bool b) { return b ? "true" : "false"; }
 
 inline string show_float(float f) {
-  string s = make_string(f);  // (could use to_string(f) defined for numeric values but GCC Win library has bug)
+  string s = make_string(f);  // Nicely Produces "0" rather than the "0.000000" of std::to_string(f).
   if (s.find_first_of(".e") == string::npos) s += ".";
   return s;
 }
 
 inline string show_double(double f) {
-  string s = make_string(f);  // (could use to_string(f) defined for numeric values but GCC Win library has bug)
+  string s = make_string(f);
   if (s.find_first_of(".e") == string::npos) s += ".";
   return s;
 }
 
 }  // namespace
-
-void Args::ensure_at_least(int n) {
-  assertx(n >= 0);
-  if (num() < n) problem(sform("need %d arguments", n));
-}
 
 bool Args::check_bool(const string& s) { return s == "0" || s == "1" || s == "true" || s == "false"; }
 
@@ -63,7 +54,7 @@ bool Args::check_double(const string& s) { return check_float(s); }
 bool Args::check_filename(const string& s) {
   if (s.empty()) return false;
   if (s[0] == '-' && s != "-") return false;
-  if (begins_with(s, "|") || ends_with(s, "|")) return true;  // for my WFile and RFile pipes
+  if (is_pipe(s) || is_url(s)) return true;
   if (s.find_first_of("*?\"<>|") != string::npos) return false;
   return true;
 }
@@ -83,19 +74,19 @@ char Args::get_char() {
 int Args::get_int() {
   const string& s = get_string();
   if (!check_int(s)) problem("invalid int");
-  return convert_int(s);
+  return to_int(s);
 }
 
 float Args::get_float() {
   const string& s = get_string();
   if (!check_float(s)) problem("invalid float");
-  return convert_float(s);
+  return to_float(s);
 }
 
 double Args::get_double() {
   const string& s = get_string();
   if (!check_double(s)) problem("invalid double");
-  return convert_double(s);
+  return to_double(s);
 }
 
 const string& Args::get_string() {
@@ -121,17 +112,17 @@ char Args::parse_char(const string& s) {
 
 int Args::parse_int(const string& s) {
   if (!check_int(s)) assertnever("Argument '" + s + "' is not an integer");
-  return convert_int(s);
+  return to_int(s);
 }
 
 float Args::parse_float(const string& s) {
   if (!check_float(s)) assertnever("Argument '" + s + "' is not a single-precision floating-point");
-  return convert_float(s);
+  return to_float(s);
 }
 
 double Args::parse_double(const string& s) {
   if (!check_double(s)) assertnever("Argument '" + s + "' is not a double-precision floating-point");
-  return convert_double(s);
+  return to_double(s);
 }
 
 void Args::problem(const string& s) {
@@ -149,7 +140,7 @@ ParseArgs::ParseArgs(int& argc, const char**& argv) : _name("") {
   _args.init(argc - 1);
   for_int(i, argc - 1) _args[i] = assertx(argv[1 + i]);
   common_construction();
-  // we have taken ownership
+  // We have taken ownership.
   argc = 0;
   argv = nullptr;
 }
@@ -164,90 +155,91 @@ ParseArgs::ParseArgs(CArrayView<string> aargs, string name) : _name(std::move(na
 void ParseArgs::common_construction() {
   _argv0 = get_canonical_path(_argv0);
   if (_argv0 != "") {
-    iadd(option("-?", 0, &ParseArgs::fquestion, nullptr, ": print available options"));
-    iadd(option("--help", 0, &ParseArgs::fquestion, nullptr, ": (<unlisted>) show help"));
-    iadd(option("--version", 0, &ParseArgs::fversion, nullptr, ": (<unlisted>) show version"));
+    iadd(option{"-?", 0, &ParseArgs::fquestion, nullptr, ": print available options (also --help, --version)"});
+    iadd(option{"--help", 0, &ParseArgs::fquestion, nullptr, ": (<unlisted>) show help"});
+    iadd(option{"--version", 0, &ParseArgs::fversion, nullptr, ": (<unlisted>) show version"});
   }
 }
 
 void ParseArgs::f(string str, bool& arg, string doc) {
   if (arg) assertnever("ParseArgs: flag '" + str + "' should not already be set");
-  iadd(option(std::move(str), 0, &ParseArgs::fbool, &arg, std::move(doc)));
+  iadd(option{std::move(str), 0, &ParseArgs::fbool, &arg, std::move(doc)});
 }
 
 void ParseArgs::p(string str, bool& arg, string doc) {
-  iadd(option(std::move(str), 1, &ParseArgs::fbool, &arg, std::move(doc)));
+  iadd(option{std::move(str), 1, &ParseArgs::fbool, &arg, std::move(doc)});
 }
 
 void ParseArgs::p(string str, char& arg, string doc) {
-  iadd(option(std::move(str), 1, &ParseArgs::fchar, &arg, std::move(doc)));
+  iadd(option{std::move(str), 1, &ParseArgs::fchar, &arg, std::move(doc)});
 }
 
 void ParseArgs::p(string str, int& arg, string doc) {
-  iadd(option(std::move(str), 1, &ParseArgs::fint, &arg, std::move(doc)));
+  iadd(option{std::move(str), 1, &ParseArgs::fint, &arg, std::move(doc)});
 }
 
 void ParseArgs::p(string str, float& arg, string doc) {
-  iadd(option(std::move(str), 1, &ParseArgs::ffloat, &arg, std::move(doc)));
+  iadd(option{std::move(str), 1, &ParseArgs::ffloat, &arg, std::move(doc)});
 }
 
 void ParseArgs::p(string str, double& arg, string doc) {
-  iadd(option(std::move(str), 1, &ParseArgs::fdouble, &arg, std::move(doc)));
+  iadd(option{std::move(str), 1, &ParseArgs::fdouble, &arg, std::move(doc)});
 }
 
 void ParseArgs::p(string str, string& arg, string doc) {
-  iadd(option(std::move(str), 1, &ParseArgs::fstring, &arg, std::move(doc)));
+  iadd(option{std::move(str), 1, &ParseArgs::fstring, &arg, std::move(doc)});
 }
 
 void ParseArgs::p(string str, int* argp, int narg, string doc) {
   assertx(narg > 0);
-  iadd(option(std::move(str), narg, &ParseArgs::fint, argp, std::move(doc)));
+  iadd(option{std::move(str), narg, &ParseArgs::fint, argp, std::move(doc)});
 }
 
 void ParseArgs::p(string str, float* argp, int narg, string doc) {
   assertx(narg > 0);
-  iadd(option(std::move(str), narg, &ParseArgs::ffloat, argp, std::move(doc)));
+  iadd(option{std::move(str), narg, &ParseArgs::ffloat, argp, std::move(doc)});
 }
 
 void ParseArgs::p(string str, double* argp, int narg, string doc) {
   assertx(narg > 0);
-  iadd(option(std::move(str), narg, &ParseArgs::fdouble, argp, std::move(doc)));
+  iadd(option{std::move(str), narg, &ParseArgs::fdouble, argp, std::move(doc)});
 }
 
-void ParseArgs::c(string str, string doc) { iadd(option(std::move(str), 0, nullptr, nullptr, std::move(doc))); }
+void ParseArgs::c(string str, string doc) { iadd(option{std::move(str), 0, nullptr, nullptr, std::move(doc)}); }
 
-void ParseArgs::p(string str, PARSEF parsef, string doc) {
-  iadd(option(std::move(str), -1, parsef, nullptr, std::move(doc)));
+void ParseArgs::p(string str, PARSE_FUNC parse_func, string doc) {
+  iadd(option{std::move(str), -1, parse_func, nullptr, std::move(doc)});
 }
 
-void ParseArgs::p(string str, PARSEF0 parsef0, string doc) {
-  iadd(option(std::move(str), -2, PARSEF(parsef0), nullptr, std::move(doc)));
+void ParseArgs::p(string str, PARSE_FUNC0 parse_func0, string doc) {
+  using voidp = void*;
+  iadd(option{std::move(str), -2, PARSE_FUNC(voidp(parse_func0)), nullptr, std::move(doc)});
 }
 
 bool ParseArgs::special_arg(const string& s) {
-  return s == "-?" || s == "--help" || s == "--version";  // maybe also s == "--"
+  return s == "-?" || s == "--help" || s == "--version";  // Maybe also s == "--".
 }
 
 void ParseArgs::print_help() {
-  std::cerr << get_ename() << " Options:" << (_disallow_prefixes ? " (no implicit prefixes)" : "") << "\n";
+  std::cerr << get_executable_name() << " Options:" << (_disallow_prefixes ? " (no implicit prefixes)" : "") << "\n";
   for (const option& o : _aroptions) {
-    string sdefault;
-    if (o.parsef == &ParseArgs::fquestion && _name != "") continue;
+    string s_default;
+    if (o.parse_func == &ParseArgs::fquestion && _name != "") continue;
     if (contains(o.doc, "(<unlisted>)")) continue;
     if (o.narg > 0) {
-      sdefault = "[";
+      s_default = "[";
       for_int(i, o.narg) {
-        string s0 = (o.parsef == &ParseArgs::fbool     ? show_bool(static_cast<bool*>(o.argp)[i])
-                     : o.parsef == &ParseArgs::fchar   ? string(1, static_cast<char*>(o.argp)[i])
-                     : o.parsef == &ParseArgs::fint    ? sform("%d", static_cast<int*>(o.argp)[i])
-                     : o.parsef == &ParseArgs::ffloat  ? show_float(static_cast<float*>(o.argp)[i])
-                     : o.parsef == &ParseArgs::fdouble ? show_double(static_cast<double*>(o.argp)[i])
-                     : o.parsef == &ParseArgs::fstring ? static_cast<string*>(o.argp)[i]
-                                                       : "?");
-        if (i > 0) sdefault += " ";
-        sdefault += s0;
+        string s0 = (o.parse_func == &ParseArgs::fbool     ? show_bool(static_cast<bool*>(o.argp)[i])
+                     : o.parse_func == &ParseArgs::fchar   ? string(1, static_cast<char*>(o.argp)[i])
+                     : o.parse_func == &ParseArgs::fint    ? sform("%d", static_cast<int*>(o.argp)[i])
+                     : o.parse_func == &ParseArgs::ffloat  ? show_float(static_cast<float*>(o.argp)[i])
+                     : o.parse_func == &ParseArgs::fdouble ? show_double(static_cast<double*>(o.argp)[i])
+                     : o.parse_func == &ParseArgs::fstring ? static_cast<string*>(o.argp)[i]
+                                                           : "?");
+        if (i > 0) s_default += " ";
+        s_default += s0;
       }
-      sdefault += "]";
+      s_default += "]";
     }
     auto i = o.doc.find(':');
     int pref = i != string::npos ? int(i) : 0;
@@ -255,29 +247,27 @@ void ParseArgs::print_help() {
     string s1 = o.str;
     if (contains(o.str, '[') && !contains(o.str, ']')) s1 += "]";
     s1 += sform(" %.*s", prefm1, o.doc.c_str());
-    s1 = sform(" %-28s %s", s1.c_str(), o.doc.c_str() + pref);                 // was -21
-    if (sdefault != "") s1 = sform("%-84s %s", s1.c_str(), sdefault.c_str());  // was -65
+    s1 = sform(" %-28s %s", s1.c_str(), o.doc.c_str() + pref);
+    if (s_default != "") s1 = sform("%-84s %s", s1.c_str(), s_default.c_str());
     std::cerr << s1.c_str() << "\n";
   }
 }
 
-string ParseArgs::get_ename() {
+string ParseArgs::get_executable_name() {
   string s = get_path_tail(_argv0);
-  if (_name != "") {
-    s += " " + _name;
-  }
+  if (_name != "") s += " " + _name;
   return s;
 }
 
 void ParseArgs::iadd(option o) {
-  if (1 && o.doc != "") {  // enforce my "conventions" to properly distinguish flags and parameters
+  if (1 && o.doc != "") {  // Enforce my "conventions" to properly distinguish flags and parameters.
     if (o.narg > 0) {
       if (o.doc[0] == ':' || !contains(o.doc, ':') || o.doc[o.doc.find(':') - 1] != ' ') {
         SHOW(o.str, o.doc);
         Warning("Possibly inconsistent parameter option comment");
       }
     }
-    if (!o.narg && o.parsef) {
+    if (!o.narg && o.parse_func) {
       if (o.doc[0] != ':') {
         SHOW(o.str, o.doc);
         Warning("Possibly inconsistent flag option comment");
@@ -292,26 +282,26 @@ auto ParseArgs::match(const string& s, bool skip_options) -> const option* {
   int nmatches = 0, minlfound = std::numeric_limits<int>::max();
   int ls = narrow_cast<int>(s.size());
   for (option& o : _aroptions) {
-    if (!o.parsef) continue;
-    if (begins_with(o.str, "*") && (s[0] != '-' || skip_options)) {
+    if (!o.parse_func) continue;
+    if (starts_with(o.str, "*") && (s[0] != '-' || skip_options)) {
       bool allow_case_independent_wildcard = true;
       if (o.str != to_lower(o.str)) allow_case_independent_wildcard = false;
-      if (ends_with(allow_case_independent_wildcard ? to_lower(s) : s, o.str.substr(1))) {
-        if (!omatch || o.str.size() > omatch->str.size()) omatch = &o;
-      }
+      if (ends_with(allow_case_independent_wildcard ? to_lower(s) : s, o.str.substr(1)) &&
+          (!omatch || o.str.size() > omatch->str.size()))
+        omatch = &o;
       continue;
     }
     if (o.str[0] == '-' && skip_options) continue;
-    if (o.str == "-" && s != "-") continue;  // require exact match of "-"
+    if (o.str == "-" && s != "-") continue;  // Require exact match of "-".
     int lo = narrow_cast<int>(o.str.size());
     auto i = o.str.find('[');
     int minfit = i != string::npos ? narrow_cast<int>(i) : _disallow_prefixes ? narrow_cast<int>(o.str.size()) : 0;
-    int nchar = clamp(ls, 2, lo);
+    int nchar = clamp(ls, 2, max(lo, ls));
     if (minfit) nchar = minfit;
     if (!o.str.compare(0, nchar, s, 0, nchar)) {
       nmatches++;
-      if (nchar == ls && lo == ls) {  // exact match
-        // bad if 2 exact matches
+      if (nchar == ls && lo == ls) {  // Exact match.
+        // Error if 2 exact matches.
         assertx(minlfound);
         minlfound = 0;
         omatch = &o;
@@ -328,14 +318,14 @@ auto ParseArgs::match(const string& s, bool skip_options) -> const option* {
 }
 
 bool ParseArgs::parse_internal() {
-  assertx(_icur != -2);  // did not already parse
+  assertx(_icur != -2);  // Did not already parse.
   bool skip = false;
   while (num()) {
     _icur = _iarg;
     const string& arg = peek_string();
     _curopt = nullptr;
     if (arg == "--") {
-      skip = true;  // treat all remaining arguments as non-options
+      skip = true;  // Treat all remaining arguments as non-options.
       if (!_other_options_ok) {
         shift_args();
         continue;
@@ -345,24 +335,25 @@ bool ParseArgs::parse_internal() {
     }
     bool is_option = arg[0] == '-' && arg[1] && !skip;
     if (_curopt && !is_option) {
-      assertx(_curopt->narg == -1);  // wildcard option; do not advance; let client parsef advance it
+      assertx(_curopt->narg == -1);  // Wildcard option; do not advance; let client parse_func advance it.
     } else {
       shift_args();
     }
-    if (!_curopt) {  // not found
+    if (!_curopt) {  // Not found.
       if ((_other_args_ok && !is_option) || (_other_options_ok && is_option)) {
         if (arg != "--" || _other_options_ok) _unrecognized_args.push(arg);
         continue;
       } else {
-        _icur = -1;  // not recognized as an option
+        _icur = -1;  // Not recognized as an option.
         problem("option not recognized");
       }
     }
     int narg = _curopt->narg;
     if (narg == -2) {
-      PARSEF0(_curopt->parsef)();
+      using voidp = void*;
+      PARSE_FUNC0(voidp(_curopt->parse_func))();
     } else {
-      _curopt->parsef(*this);
+      _curopt->parse_func(*this);
     }
     if (arg == "-?" || arg == "--help") {
       _unrecognized_args.push(arg);
@@ -376,7 +367,7 @@ bool ParseArgs::parse_internal() {
 
 bool ParseArgs::parse() {
   if (!parse_internal()) return false;
-  // ready to get_*() any leftover arguments
+  // Ready to get_*() any leftover arguments.
   _args = std::move(_unrecognized_args);
   _iarg = 0;
   return true;
@@ -391,7 +382,7 @@ bool ParseArgs::parse_and_extract(Array<string>& aargs) {
 }
 
 void ParseArgs::problem(const string& s) {
-  string mes = get_ename() + " : ParseArgs error : " + s;
+  string mes = get_executable_name() + " : ParseArgs error : " + s;
   if (_iarg && _iarg - 1 != _icur) mes += " at '" + _args[_iarg - 1] + "'";
   if (_icur >= 0) mes += " when parsing option '" + _args[_icur] + "'";
   if (_curopt && _args[_icur] != _curopt->str) mes += " (interpreted as '" + _curopt->str + "')";
@@ -414,13 +405,13 @@ void ParseArgs::fbool(Args& args) {
   ParseArgs& pargs = static_cast<ParseArgs&>(args);
   auto* argp = static_cast<bool*>(pargs._curopt->argp);
   int n = pargs._curopt->narg;
-  if (!n) {  // set a flag variable
+  if (!n) {  // Set a flag variable.
     if (0 && *argp) {
       SHOW(pargs._curopt->str);
       Warning("ParseArgs: flag is already set");
     }
     *argp = true;
-  } else {  // set a parameter variable
+  } else {  // Set a parameter variable.
     for_int(i, n) argp[i] = pargs.get_bool();
   }
 }
@@ -473,17 +464,14 @@ void ParseArgs::fversion(Args& args) {
 #if defined(_MSC_VER)
   str += sform(" MSC=%d", _MSC_VER);
 #endif
-#if defined(__VERSION__)  // for __GNUC__
+#if defined(__VERSION__)  // For __GNUC__.
   str += " version=" __VERSION__;
 #endif
   str += sform(" cplusplus=%d", int(__cplusplus));
 #if defined(_M_IX86_FP)
   str += sform(" IX86_FP=%d", _M_IX86_FP);
 #endif
-#if defined(_OPENMP)
-  str += sform(" OpenMP=%d", _OPENMP);
-#endif
-// #if defined(__DATE__) && defined(__TIME__) // not so useful because compilation time of this particular file
+// #if defined(__DATE__) && defined(__TIME__) // Not so useful because compilation time of this particular file.
 //     str += sform(" built=[%s %s]", __DATE__, __TIME__);
 // #endif
 #if defined(__AVX__)
@@ -500,8 +488,8 @@ void ParseArgs::fversion(Args& args) {
 }
 
 string ParseArgs::header() {
-  string smain = "Created at " + get_header_info() + " using:\n";
-  const int thresh_line_len = 120 - 5;  // was 80 - 5
+  string s_main = "Created at " + get_header_info() + " using:\n";
+  const int thresh_line_len = 120 - 5;
   int len = 0;
   string s = g_comment_prefix_string;
   for_int(i, 1 + _args.num()) {
@@ -514,7 +502,7 @@ string ParseArgs::header() {
     s = s + " " + arg;
   }
   s = s + "\n";
-  return smain + s;
+  return s_main + s;
 }
 
 }  // namespace hh

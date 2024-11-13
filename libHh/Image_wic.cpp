@@ -11,15 +11,15 @@ void Image_wic_dummy_function_to_avoid_linkage_warnings() {}
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>  // required by WIC; must appear before other headers.
 
-#include <Shlwapi.h>  // SHCreateMemStream()
-#include <wincodec.h>  // WIC
+#include <Shlwapi.h>      // SHCreateMemStream()
+#include <wincodec.h>     // WIC
 #include <wincodecsdk.h>  // IWICMetadataBlockReader
 
 HH_REFERENCE_LIB("ole32.lib");     // CoInitializeEx() and CoCreateInstance()
 HH_REFERENCE_LIB("oleaut32.lib");  // VARIANT; odd: required from command-line cl.exe but not from msbuild.exe
 HH_REFERENCE_LIB("shlwapi.lib");   // SHCreateMemStream()
 
-#include <cctype>  // std::isalnum(), std::toupper()
+#include <cctype>  // isalnum(), toupper()
 
 // #include "libHh/ConsoleProgress.h"
 #include "libHh/FileIO.h"
@@ -28,15 +28,15 @@ HH_REFERENCE_LIB("shlwapi.lib");   // SHCreateMemStream()
 using namespace hh;
 
 // JPEG EXIF:
-// I cannot find a way to store the metadata associated with an image into memory (e.g. Image::Attrib::exif_data).
+// We cannot find a way to store the metadata associated with an image into memory (e.g. Image::Attrib::exif_data).
 // WIC allows traversing the multiple metadata containers and all of their elements (of different types).
 // Storing all this seems hard, and reconstructing the proper hierarchy during writing may be impossible.
 // WIC really expects that we keep open the input image, with an active IWICMetadataBlockReader,
 //  so that the metadata can be copied using "piBlockWriter->InitializeFromBlockReader(piBlockReader);"
 //  (see How-to: Re-encode a JPEG Image with Metadata:
-//    http://msdn.microsoft.com/en-us/library/windows/desktop/ee719794%28v=vs.85%29.aspx ).
+//    https://learn.microsoft.com/en-us/windows/win32/wic/-wic-codec-jpegmetadataencoding ).
 // My current approach is to store the input image filename into Image::Attrib::orig_filename.
-// If the input was read from a pipe, I issue a warning about missing Exif when writing the image.
+// If the input was read from a pipe, we issue a warning about missing Exif when writing the image.
 
 namespace hh {
 
@@ -44,7 +44,7 @@ namespace {
 
 const std::wstring orientation_flag = L"/app1/ifd/{ushort=274}";  // EXIF tag for image orientation
 
-#define AS(expr) assertx(SUCCEEDED(expr))
+#define AS(expr) assertt(SUCCEEDED(expr))
 
 inline bool my_GlobalUnlock(HGLOBAL hGbl) { return !GlobalUnlock(hGbl) && GetLastError() == NO_ERROR; }
 
@@ -58,28 +58,26 @@ void wic_init() {
   AS(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic_factory)));
 }
 
-struct PSG {
+struct SuffixGuid {
   string suffix;
   const GUID* guid;
 };
-const Array<PSG> k_ar_suffix_container = {
-    PSG{"bmp", &GUID_ContainerFormatBmp},  PSG{"png", &GUID_ContainerFormatPng},
-    PSG{"jpg", &GUID_ContainerFormatJpeg}, PSG{"jpeg", &GUID_ContainerFormatJpeg},
-    PSG{"tif", &GUID_ContainerFormatTiff}, PSG{"tiff", &GUID_ContainerFormatTiff},
-    PSG{"gif", &GUID_ContainerFormatGif},  PSG{"wmp", &GUID_ContainerFormatWmp},
+const Array<SuffixGuid> k_ar_suffix_container = {
+    SuffixGuid{"bmp", &GUID_ContainerFormatBmp},  SuffixGuid{"png", &GUID_ContainerFormatPng},
+    SuffixGuid{"jpg", &GUID_ContainerFormatJpeg}, SuffixGuid{"jpeg", &GUID_ContainerFormatJpeg},
+    SuffixGuid{"tif", &GUID_ContainerFormatTiff}, SuffixGuid{"tiff", &GUID_ContainerFormatTiff},
+    SuffixGuid{"gif", &GUID_ContainerFormatGif},  SuffixGuid{"wmp", &GUID_ContainerFormatWmp},
 };
 
 const GUID* get_container_format(const string& suffix) {
-  for (const auto& p : k_ar_suffix_container) {
+  for (const auto& p : k_ar_suffix_container)
     if (p.suffix == suffix) return p.guid;
-  }
   return nullptr;
 }
 
 const string& get_suffix(const GUID* container_format) {
-  for (const auto& p : k_ar_suffix_container) {
+  for (const auto& p : k_ar_suffix_container)
     if (*p.guid == *container_format) return p.suffix;
-  }
   static const string& k_snull = *new string;
   return k_snull;
 }
@@ -113,6 +111,14 @@ class my_HGLOBAL {
  private:
   HGLOBAL _hMem{nullptr};
 };
+
+string canonical_pathname(string s) {
+  s = get_canonical_path(s);
+  if (starts_with(s, "/")) s = "C:" + s;
+  if (s.size() > 2 && std::isalnum(s[0]) && s[1] == ':') s[0] = static_cast<char>(std::toupper(s[0]));
+  if (s.size() < 3 || s[2] != '/') assertnever("unexpected pathname in " + s);
+  return s;
+}
 
 }  // namespace
 
@@ -190,7 +196,7 @@ void Image::read_file_wic(const string& filename, bool bgra) {
     }
     com_ptr<IWICFormatConverter> converter;
     AS(wic_factory->CreateFormatConverter(&converter));
-    // Pixel formats:  http://msdn.microsoft.com/en-us/library/windows/desktop/ee719797%28v=vs.85%29.aspx
+    // Pixel formats: https://learn.microsoft.com/en-us/windows/win32/wic/-wic-codec-native-pixel-formats
     //  PRGBA is premultiplied alpha (whereas RGBA is not)
     // We want to decode the incoming pixels as non-premultiplied alpha (RGBA or BGRA) so that the decoder
     //  does not do any transformation, although the values are actually (often) pre-multiplied alpha.
@@ -215,7 +221,7 @@ void Image::read_file_wic(const string& filename, bool bgra) {
       unsigned stride = xsize() * sizeof(Pixel);
       unsigned buffer_size = assert_narrow_cast<unsigned>(size() * sizeof(Pixel));
       // For some unknown reason, this next line fails intermittently on CONFIG=w32 for
-      //  "Filterimage -assemble 2 2 rootname.{0.0,1.0,0.1,1.1}.png -diff data/lake.png -stat".
+      //  "Filterimage -assemble 2 2 root_name.{0.0,1.0,0.1,1.1}.png -diff data/lake.png -stat".
       AS(converter->CopyPixels(nullptr, stride, buffer_size, reinterpret_cast<BYTE*>(data())));
     }
     attrib().orig_filename = get_path_absolute(filename);
@@ -252,14 +258,6 @@ void Image::read_file_wic(const string& filename, bool bgra) {
   }
 }
 
-string canonical_pathname(string s) {
-  s = get_canonical_path(s);
-  if (begins_with(s, "/")) s = "C:" + s;
-  if (s.size() > 2 && std::isalnum(s[0]) && s[1] == ':') s[0] = static_cast<char>(std::toupper(s[0]));
-  if (s.size() < 3 || s[2] != '/') assertnever("unexpected pathname in " + s);
-  return s;
-}
-
 void Image::write_file_wic(const string& filename, bool bgra) const {
   string suf;
   // previously had: if (suffix() == "" && file_requires_pipe(filename)) suf = "bmp";
@@ -290,7 +288,7 @@ void Image::write_file_wic(const string& filename, bool bgra) const {
   my_HGLOBAL hMem;  // gets defined if write_through_memory
   com_ptr<IStream> output_stream;
   if (write_through_memory) {
-    // http://code.google.com/p/sumatrapdf/source/browse/trunk/src/utils/WinUtil.cpp?r=9012
+    // https://github.com/sumatrapdfreader/sumatrapdf/blob/master/src/utils/WinUtil.cpp
     size_t iSize = 0;
     hMem = assertx(GlobalAlloc(GMEM_MOVEABLE, iSize));
     AS(CreateStreamOnHGlobal(hMem, FALSE, &output_stream));
@@ -303,7 +301,8 @@ void Image::write_file_wic(const string& filename, bool bgra) const {
     AS(output_wic_stream->QueryInterface(IID_PPV_ARGS(&output_stream)));
   }
   assertx(output_stream);
-  // CreateEncoder:  http://msdn.microsoft.com/en-us/library/windows/desktop/ee690311%28v=vs.85%29.aspx
+  // CreateEncoder:
+  //  https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicimagingfactory-createencoder
   com_ptr<IWICBitmapEncoder> encoder;
   AS(wic_factory->CreateEncoder(*container_format, nullptr, &encoder));
   AS(encoder->Initialize(output_stream, WICBitmapEncoderNoCache));
@@ -317,13 +316,13 @@ void Image::write_file_wic(const string& filename, bool bgra) const {
     notification->RegisterProgressNotification(my_progress_callback, &cprogress, WICProgressOperationAll);
   }
 #endif
-  // WIC GUIDs and CLSIDs:  http://msdn.microsoft.com/en-us/library/windows/desktop/ee719882%28v=vs.85%29.aspx
+  // WIC GUIDs and CLSIDs: https://learn.microsoft.com/en-us/windows/win32/wic/-wic-guids-clsids
   {
     com_ptr<IWICBitmapFrameEncode> frame_encode;
     {
       IPropertyBag2* property_bag;  // auto freed
       AS(encoder->CreateNewFrame(&frame_encode, &property_bag));
-      // Encoder options:  http://msdn.microsoft.com/en-us/library/windows/desktop/ee719871%28v=vs.85%29.aspx
+      // Encoder options: https://learn.microsoft.com/en-us/windows/win32/wic/-wic-creating-encoder
       if (container_format == &GUID_ContainerFormatJpeg) {
         int quality = getenv_int("JPG_QUALITY", 95, true);  // 0--100 (default 75)
         assertx(quality > 0 && quality <= 100);
@@ -334,7 +333,7 @@ void Image::write_file_wic(const string& filename, bool bgra) const {
         VariantInit(&variant);
         variant.vt = VT_R4;
         variant.fltVal = quality / 100.f;  // range [0., 1.]
-        // I verified that the compression rate is similar to that of libjpeg for quality = 50, 95, 100.
+        // The compression rate is verified to be similar to that of libjpeg for quality = 50, 95, 100.
         AS(property_bag->Write(1, &option, &variant));
         VariantClear(&variant);
       }
@@ -365,7 +364,7 @@ void Image::write_file_wic(const string& filename, bool bgra) const {
         if (1) {
           // Additional metadata: make sure that orientation field is reset to normal,
           //  because we have applied any rotation to the image content itself.
-          // http://mdsn.asyan.org/CreateDecoderFromFilename/how-to-re-encode-a-jpeg-image-with-metadata.%D0%BE%D1%82%D0%B2%D0%B5%D1%82
+          // https://learn.microsoft.com/en-us/windows/win32/wic/-wic-codec-jpegmetadataencoding
           com_ptr<IWICMetadataQueryWriter> pQueryWriter;
           if (assertw(SUCCEEDED(frame_encode->GetMetadataQueryWriter(&pQueryWriter)))) {
             PROPVARIANT propvariant;
@@ -386,7 +385,7 @@ void Image::write_file_wic(const string& filename, bool bgra) const {
       if (0) pixel_format = GUID_WICPixelFormat24bppBGR;
     }
     AS(frame_encode->SetPixelFormat(&pixel_format));
-    // I believe that the created "bitmap" is a view on the existing data, without any copy -- nice.
+    // The created "bitmap" seems to be a view on the existing data, without any copy -- nice.
     com_ptr<IWICBitmap> bitmap;
     {
       // If image lacks alpha channel, use RGBA (with non-premultiplied alpha) so that encoder can ignore

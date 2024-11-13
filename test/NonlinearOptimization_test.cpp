@@ -36,11 +36,11 @@ double feval(ArrayView<double> ret_grad) {
     }
     default: assertnever("");
   }
-  if (1) {
+  if (0) {
     // was %18.12g but then get differences between different CONFIG
-    string sx;
-    for_int(i, g_x.num()) sx += sform("%s %11.5g", (i ? "," : ""), g_x[i]);
-    showf("x=(%s) f=%11.5g mag(g)=%11.3g)\n", sx.c_str(), f, mag(ret_grad));
+    string s_x;
+    for_int(i, g_x.num()) s_x += sform("%s %11.5g", (i ? "," : ""), g_x[i]);
+    showf("x=(%s) f=%11.5g mag(g)=%11.3g)\n", s_x.c_str(), f, mag(ret_grad));
   }
   return f;
 }
@@ -56,7 +56,8 @@ int main() {
     // NonlinearOptimization<double (*)(ArrayView<double>)> opt(g_x, feval);  // works
     // NonlinearOptimization<double (&)(ArrayView<double>)> opt(g_x, feval);  // works
     // NonlinearOptimization<decltype(&feval)> opt(g_x, feval);  // works
-    NonlinearOptimization<> opt(g_x, feval);  // works
+    // NonlinearOptimization<> opt(g_x, feval);  // works
+    NonlinearOptimization opt(g_x, feval);
     const int niter = 5;
     opt.set_max_neval(niter);
     assertx(opt.solve());
@@ -71,6 +72,15 @@ int main() {
       };
       NonlinearOptimization<Eval> opt(g_x);
       assertx(opt.solve());
+      switch (ifunc) {
+        case 0: assertx(dist(g_x, V(0.45509f)) < 1e-4f); break;
+        case 1: assertx(dist(g_x, V(0.3f, 0.4f)) < 1e-5f); break;
+        case 2: assertx(dist(g_x, V(-0.19092f, 0.73547f, 0.7f)) < 1e-5f); break;
+        default: assertnever("");
+      }
+      // x=(     0.45509) f=   0.045971 mag(g)=   9.96e-13)
+      // x=(         0.3,         0.4) f=          0 mag(g)=          0)
+      // x=(    -0.19092,     0.73547,         0.7) f=     0.9053 mag(g)=   2.99e-11)
     }
   }
 }

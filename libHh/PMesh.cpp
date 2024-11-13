@@ -1,34 +1,33 @@
 // -*- C++ -*-  Copyright (c) Microsoft Corporation; see license.txt
 #include "libHh/PMesh.h"
 
-#include <cstring>  // strncmp() etc.
-
 #include "libHh/BinaryIO.h"   // read_binary_std() and write_binary_std()
 #include "libHh/GMesh.h"      // in extract_gmesh()
-#include "libHh/HashTuple.h"  // std::hash<std::pair<...>>
+#include "libHh/HashTuple.h"  // hash<pair<...>>
 #include "libHh/PArray.h"     // ar_pwedge
 #include "libHh/RangeOp.h"    // fill()
 #include "libHh/Set.h"
+#include "libHh/Vector4.h"
 
 namespace hh {
 
-constexpr int k_undefined = k_debug ? -std::numeric_limits<int>::max() : -1;
+constexpr int k_undefined = k_debug ? std::numeric_limits<int>::min() : -1;
 
 // *** Performance
 
 // Analysis of memory requirement:
 //
-//  PMVertex:   3*4     *1v/v   == 12 bytes/vertex
-//  PMWedge:    6*4     *1w/v   == 24 bytes/vertex (** Assume: 1 wedge/vertex)
-//  PMFace:     4*4     *2f/v   == 32 bytes/vertex
-//  PMFaceN:    3*4     *2f/v   == 24 bytes/vertex
+//  PmVertex:   3*4     *1v/v   == 12 bytes/vertex
+//  PmWedge:    6*4     *1w/v   == 24 bytes/vertex (** Assume: 1 wedge/vertex)
+//  PmFace:     4*4     *2f/v   == 32 bytes/vertex
+//  PmFaceN:    3*4     *2f/v   == 24 bytes/vertex
 //
 //  WMesh:      68 bytes/vertex
 //
 //  AWMesh:     92 bytes/vertex
 //
-//  PMSVertex:  8*4     *1v/v   == 32 bytes/vertex
-//  PMSFace:    4*4     *2f/v   == 32 bytes/vertex
+//  PmSVertex:  8*4     *1v/v   == 32 bytes/vertex
+//  PmSFace:    4*4     *2f/v   == 32 bytes/vertex
 //
 //  SMesh:      64 bytes/vertex
 //
@@ -39,29 +38,22 @@ constexpr int k_undefined = k_debug ? -std::numeric_limits<int>::max() : -1;
 //  PMesh:      56 bytes/vertex (smaller than WMesh and SMesh!)
 //
 // optimize:
-// - if I had to do it over again, I would require ii == 2 always, and remove
-//    the vad_small field.
+// - if redoing it all again, would require ii == 2 always, and remove the vad_small field.
 // - place all ar_wad in a separate array.  let PMeshIter keep pointer into it.
 // - do the same for fl_matid and fr_matid
 //
 // Using shorts for flclw and all indices, separate matid array, and no
-//  vad_small, I get 38n + 58m bytes for PMesh  (above is 56n + 92m bytes)
+//  vad_small, we get 38n + 58m bytes for PMesh  (above is 56n + 92m bytes)
 
 // So practically speaking (1999-05-21):
 //  D3D mesh : 44n bytes
 //  PM  mesh : 40n + 60m bytes
 
-// *** Globals
-
-// k_magic_first_byte works because in network order, the first byte of the
-//  integer flclw is the MSB, which should be much smaller than 0xFF.
-constexpr int k_magic_first_byte = 0xFF;
-
 // *** Misc
 
 namespace {
 
-inline void attrib_ok(PMWedgeAttrib& a) {
+inline void attrib_ok(PmWedgeAttrib& a) {
   float len2 = mag2(a.normal);
   // Normal could be all-zero from MeshSimplify,
   //  either because it was zero in original model,
@@ -84,46 +76,46 @@ inline int face_prediction(int fa, int fb, int ii) {
 
 // *** Attrib
 
-void interp(PMVertexAttrib& a, const PMVertexAttrib& a1, const PMVertexAttrib& a2, float f1) {
-  a.point = interp(a1.point, a2.point, f1);
+void interp(PmVertexAttrib& a, const PmVertexAttrib& a1, const PmVertexAttrib& a2, float frac1) {
+  a.point = interp(a1.point, a2.point, frac1);
 }
 
-void interp(PMWedgeAttrib& a, const PMWedgeAttrib& a1, const PMWedgeAttrib& a2, float f1) {
-  a.normal = ok_normalized(interp(a1.normal, a2.normal, f1));
-  a.rgb = interp(a1.rgb, a2.rgb, f1);
-  a.uv = interp(a1.uv, a2.uv, f1);
+void interp(PmWedgeAttrib& a, const PmWedgeAttrib& a1, const PmWedgeAttrib& a2, float frac1) {
+  a.normal = ok_normalized(interp(a1.normal, a2.normal, frac1));
+  a.rgb = interp(a1.rgb, a2.rgb, frac1);
+  a.uv = interp(a1.uv, a2.uv, frac1);
 }
 
-void interp(PMSVertexAttrib& a, const PMSVertexAttrib& a1, const PMSVertexAttrib& a2, float f1) {
-  interp(a.v, a1.v, a2.v, f1);
-  interp(a.w, a1.w, a2.w, f1);
+void interp(PmSVertexAttrib& a, const PmSVertexAttrib& a1, const PmSVertexAttrib& a2, float frac1) {
+  interp(a.v, a1.v, a2.v, frac1);
+  interp(a.w, a1.w, a2.w, frac1);
 }
 
-void add(PMVertexAttrib& a, const PMVertexAttrib& a1, const PMVertexAttribD& ad) { a.point = a1.point + ad.dpoint; }
+void add(PmVertexAttrib& a, const PmVertexAttrib& a1, const PmVertexAttribD& ad) { a.point = a1.point + ad.dpoint; }
 
-void sub(PMVertexAttrib& a, const PMVertexAttrib& a1, const PMVertexAttribD& ad) { a.point = a1.point - ad.dpoint; }
+void sub(PmVertexAttrib& a, const PmVertexAttrib& a1, const PmVertexAttribD& ad) { a.point = a1.point - ad.dpoint; }
 
-void diff(PMVertexAttribD& ad, const PMVertexAttrib& a1, const PMVertexAttrib& a2) { ad.dpoint = a1.point - a2.point; }
+void diff(PmVertexAttribD& ad, const PmVertexAttrib& a1, const PmVertexAttrib& a2) { ad.dpoint = a1.point - a2.point; }
 
-void add(PMWedgeAttrib& a, const PMWedgeAttrib& a1, const PMWedgeAttribD& ad) {
+void add(PmWedgeAttrib& a, const PmWedgeAttrib& a1, const PmWedgeAttribD& ad) {
   a.normal = a1.normal + ad.dnormal;
   a.rgb = a1.rgb + ad.drgb;
   a.uv = a1.uv + ad.duv;
 }
 
-void add_zero(PMWedgeAttrib& a, const PMWedgeAttribD& ad) {
+void add_zero(PmWedgeAttrib& a, const PmWedgeAttribD& ad) {
   a.normal = ad.dnormal;
   a.rgb = ad.drgb;
   a.uv = ad.duv;
 }
 
-void sub_noreflect(PMWedgeAttrib& a, const PMWedgeAttrib& abase, const PMWedgeAttribD& ad) {
+void sub_noreflect(PmWedgeAttrib& a, const PmWedgeAttrib& abase, const PmWedgeAttribD& ad) {
   a.normal = abase.normal - ad.dnormal;
   a.rgb = abase.rgb - ad.drgb;
   a.uv = abase.uv - ad.duv;
 }
 
-void sub_reflect(PMWedgeAttrib& a, const PMWedgeAttrib& abase, const PMWedgeAttribD& ad) {
+void sub_reflect(PmWedgeAttrib& a, const PmWedgeAttrib& abase, const PmWedgeAttribD& ad) {
   // note: may have abase == a -> not really const
   const Vector& n = abase.normal;
   const Vector& d = ad.dnormal;
@@ -134,7 +126,7 @@ void sub_reflect(PMWedgeAttrib& a, const PMWedgeAttrib& abase, const PMWedgeAttr
   a.uv = abase.uv - ad.duv;
 }
 
-void diff(PMWedgeAttribD& ad, const PMWedgeAttrib& a1, const PMWedgeAttrib& a2) {
+void diff(PmWedgeAttribD& ad, const PmWedgeAttrib& a1, const PmWedgeAttrib& a2) {
   ad.dnormal = a1.normal - a2.normal;
   float a1rgb0 = a1.rgb[0], a1rgb1 = a1.rgb[1], a1rgb2 = a1.rgb[2];
   float a2rgb0 = a2.rgb[0], a2rgb1 = a2.rgb[1], a2rgb2 = a2.rgb[2];
@@ -158,28 +150,22 @@ void diff(PMWedgeAttribD& ad, const PMWedgeAttrib& a1, const PMWedgeAttrib& a2) 
   ad.duv[1] = a1uv1 - a2uv1;
 }
 
-int compare(const PMVertexAttrib& a1, const PMVertexAttrib& a2) { return compare(a1.point, a2.point); }
+int compare(const PmVertexAttrib& a1, const PmVertexAttrib& a2) { return compare(a1.point, a2.point); }
 
-int compare(const PMVertexAttrib& a1, const PMVertexAttrib& a2, float tol) { return compare(a1.point, a2.point, tol); }
+int compare(const PmVertexAttrib& a1, const PmVertexAttrib& a2, float tol) { return compare(a1.point, a2.point, tol); }
 
-int compare(const PMWedgeAttrib& a1, const PMWedgeAttrib& a2) {
-  int r;
-  r = compare(a1.normal, a2.normal);
-  if (r) return r;
-  r = compare(a1.rgb, a2.rgb);
-  if (r) return r;
-  r = compare(a1.uv, a2.uv);
-  return r;
+int compare(const PmWedgeAttrib& a1, const PmWedgeAttrib& a2) {
+  if (int r = compare(a1.normal, a2.normal); r != 0) return r;
+  if (int r = compare(a1.rgb, a2.rgb); r != 0) return r;
+  if (int r = compare(a1.uv, a2.uv); r != 0) return r;
+  return 0;
 }
 
-int compare(const PMWedgeAttrib& a1, const PMWedgeAttrib& a2, float tol) {
-  int r;
-  r = compare(a1.normal, a2.normal, tol);
-  if (r) return r;
-  r = compare(a1.rgb, a2.rgb, tol);
-  if (r) return r;
-  r = compare(a1.uv, a2.uv, tol);
-  return r;
+int compare(const PmWedgeAttrib& a1, const PmWedgeAttrib& a2, float tol) {
+  if (int r = compare(a1.normal, a2.normal, tol); r != 0) return r;
+  if (int r = compare(a1.rgb, a2.rgb, tol); r != 0) return r;
+  if (int r = compare(a1.uv, a2.uv, tol); r != 0) return r;
+  return 0;
 }
 
 // *** WMesh
@@ -189,9 +175,13 @@ void WMesh::read(std::istream& is, const PMeshInfo& pminfo) {
   _materials.read(is);
   int nvertices, nwedges, nfaces;
   {
-    string sline;
-    assertx(my_getline(is, sline));
-    assertx(sscanf(sline.c_str(), "nvertices=%d nwedges=%d nfaces=%d", &nvertices, &nwedges, &nfaces) == 3);
+    string line;
+    assertx(my_getline(is, line));
+    const char* s = line.c_str();
+    s = assertx(after_prefix(s, "nvertices=")), nvertices = int_from_chars(s);
+    s = assertx(after_prefix(s, " nwedges=")), nwedges = int_from_chars(s);
+    s = assertx(after_prefix(s, " nfaces=")), nfaces = int_from_chars(s);
+    assert_no_more_chars(s);
   }
   _vertices.init(nvertices);
   _wedges.init(nwedges);
@@ -207,11 +197,9 @@ void WMesh::read(std::istream& is, const PMeshInfo& pminfo) {
     assertx(read_binary_std(is, buf));
     Vector& nor = _wedges[w].attrib.normal;
     A3dColor& rgb = _wedges[w].attrib.rgb;
-    UV& uv = _wedges[w].attrib.uv;
+    Uv& uv = _wedges[w].attrib.uv;
     const float* p = buf.data();
-    if (1) {
-      for_int(c, 3) nor[c] = *p++;
-    }
+    for_int(c, 3) nor[c] = *p++;
     if (pminfo._has_rgb) {
       for_int(c, 3) rgb[c] = *p++;
     } else {
@@ -254,15 +242,83 @@ void WMesh::write(std::ostream& os, const PMeshInfo& pminfo) const {
   assertx(os);
 }
 
-void WMesh::extract_gmesh(GMesh& gmesh, const PMeshInfo& pminfo) const {
+inline Pixel pack_color(const A3dColor& col) { return Vector4(col[0], col[1], col[2], 1.f).pixel(); }
+
+void WMesh::write_ply(std::ostream& os, const PMeshInfo& pminfo, bool binary) const {
+  const bool uv_in_vertex = true;  // Else in face, which is less compact.
+  os << "ply\n";
+  // Big Endian is network order, compatible with write_binary_std(...);
+  os << "format " << (binary ? "binary_big_endian" : "ascii") << " 1.0\n";
+  os << "comment PM_nvertices=" << _vertices.num() << "\n";
+  os << "element vertex " << _wedges.num() << "\n";
+  os << "property float x\n";
+  os << "property float y\n";
+  os << "property float z\n";
+  os << "property float nx\n";
+  os << "property float ny\n";
+  os << "property float nz\n";
+  if (pminfo._has_rgb) {
+    os << "property uchar red\n";
+    os << "property uchar green\n";
+    os << "property uchar blue\n";
+  }
+  if (pminfo._has_uv && uv_in_vertex) {
+    os << "property float s\n";  // Or "texcoord_u".
+    os << "property float t\n";  // Or "texcoord_v".
+  }
+  os << "element face " << _faces.num() << "\n";
+  os << "property list uchar int vertex_indices\n";
+  if (pminfo._has_uv && !uv_in_vertex) os << "property list uchar float texcoord\n";
+  os << "end_header\n";
+  if (binary) {
+    for_int(w, _wedges.num()) {
+      const int v = _wedges[w].vertex;
+      write_binary_std(os, _vertices[v].attrib.point.const_view());
+      write_binary_std(os, _wedges[w].attrib.normal.const_view());
+      if (pminfo._has_rgb) write_binary_raw(os, pack_color(_wedges[w].attrib.rgb).head<3>().const_view());
+      if (pminfo._has_uv && uv_in_vertex) write_binary_std(os, _wedges[w].attrib.uv.const_view());
+    }
+    for_int(f, _faces.num()) {
+      write_binary_raw(os, V(uchar(3)).const_view());
+      write_binary_std(os, _faces[f].wedges.const_view());
+      if (pminfo._has_uv && !uv_in_vertex) {
+        write_binary_raw(os, V(uchar(6)).const_view());
+        for_int(j, 3) write_binary_std(os, _wedges[_faces[f].wedges[j]].attrib.uv.const_view());
+      }
+    }
+  } else {
+    const auto write_ascii = [&](const auto& v, bool space = true) {
+      for_int(c, v.Num) os << (space || c > 0 ? " " : "") << v[c];
+    };
+    for_int(w, _wedges.num()) {
+      const int v = _wedges[w].vertex;
+      write_ascii(_vertices[v].attrib.point, false);
+      write_ascii(_wedges[w].attrib.normal);
+      if (pminfo._has_rgb) write_ascii(convert<int>(pack_color(_wedges[w].attrib.rgb).head<3>()));
+      if (pminfo._has_uv && uv_in_vertex) write_ascii(_wedges[w].attrib.uv);
+      os << "\n";
+    }
+    for_int(f, _faces.num()) {
+      os << "3";
+      write_ascii(_faces[f].wedges);
+      os << "\n";
+      if (pminfo._has_uv && !uv_in_vertex) {
+        os << "6";
+        for_int(j, 3) write_ascii(_wedges[_faces[f].wedges[j]].attrib.uv);
+        os << "\n";
+      }
+    }
+  }
+}
+
+GMesh WMesh::extract_gmesh(const PMeshInfo& pminfo) const {
+  GMesh gmesh;
   const int no_ref = -1, multiple_refs = -2;
   Array<int> wedgeref(_vertices.num(), no_ref);
   for_int(w, _wedges.num()) {
     int v = _wedges[w].vertex;
-    int& wr = wedgeref[v];
-    wr = wr == no_ref ? w : multiple_refs;
+    wedgeref[v] = wedgeref[v] == no_ref ? w : multiple_refs;
   }
-  assertx(!gmesh.num_vertices());
   string str;
   for_int(v, _vertices.num()) {
     Vertex gv = gmesh.create_vertex();
@@ -275,13 +331,9 @@ void WMesh::extract_gmesh(GMesh& gmesh, const PMeshInfo& pminfo) const {
       const Vector& nor = _wedges[wr].attrib.normal;
       gmesh.update_string(gv, "normal", csform_vec(str, nor));
       const A3dColor& rgb = _wedges[wr].attrib.rgb;
-      if (pminfo._has_rgb) {
-        gmesh.update_string(gv, "rgb", csform_vec(str, rgb));
-      }
-      const UV& uv = _wedges[wr].attrib.uv;
-      if (pminfo._has_uv) {
-        gmesh.update_string(gv, "uv", csform_vec(str, uv));
-      }
+      if (pminfo._has_rgb) gmesh.update_string(gv, "rgb", csform_vec(str, rgb));
+      const Uv& uv = _wedges[wr].attrib.uv;
+      if (pminfo._has_uv) gmesh.update_string(gv, "uv", csform_vec(str, uv));
     }
   }
   Array<Vertex> gva;
@@ -304,15 +356,12 @@ void WMesh::extract_gmesh(GMesh& gmesh, const PMeshInfo& pminfo) const {
       const Vector& nor = _wedges[w].attrib.normal;
       gmesh.update_string(gc, "normal", csform_vec(str, nor));
       const A3dColor& rgb = _wedges[w].attrib.rgb;
-      if (pminfo._has_rgb) {
-        gmesh.update_string(gc, "rgb", csform_vec(str, rgb));
-      }
-      const UV& uv = _wedges[w].attrib.uv;
-      if (pminfo._has_uv) {
-        gmesh.update_string(gc, "uv", csform_vec(str, uv));
-      }
+      if (pminfo._has_rgb) gmesh.update_string(gc, "rgb", csform_vec(str, rgb));
+      const Uv& uv = _wedges[w].attrib.uv;
+      if (pminfo._has_uv) gmesh.update_string(gc, "uv", csform_vec(str, uv));
     }
   }
+  return gmesh;
 }
 
 void WMesh::ok() const {
@@ -330,6 +379,12 @@ void WMesh::ok() const {
     int matid = _faces[f].attrib.matid & ~AWMesh::k_Face_visited_mask;
     assertx(_materials.ok(matid));
   }
+}
+
+Array<int> WMesh::WMesh::gather_someface() const {
+  Array<int> someface(_vertices.num());
+  for_int(f, _faces.num()) for (const int v : face_vertices(f)) someface[v] = f;
+  return someface;
 }
 
 // *** Vsplit
@@ -355,20 +410,18 @@ void Vsplit::read(std::istream& is, const PMeshInfo& pminfo) {
   const int bufn = 6 + nwa * wadlength + 2 * pminfo._has_resid;
   assertx(bufn <= buf.num());
   assertx(read_binary_std(is, buf.head(bufn)));
-  Vector& vlarge = vad_large.dpoint;
-  for_int(c, 3) vlarge[c] = buf[0 + c];
-  Vector& vsmall = vad_small.dpoint;
-  for_int(c, 3) vsmall[c] = buf[3 + c];
+  Vector& v_large = vad_large.dpoint;
+  for_int(c, 3) v_large[c] = buf[0 + c];
+  Vector& v_small = vad_small.dpoint;
+  for_int(c, 3) v_small[c] = buf[3 + c];
   ar_wad.init(nwa);
   for_int(i, nwa) {
     int bufw = 6 + i * wadlength;
     Vector& nor = ar_wad[i].dnormal;
     A3dColor& rgb = ar_wad[i].drgb;
-    UV& uv = ar_wad[i].duv;
+    Uv& uv = ar_wad[i].duv;
     float* p = &buf[bufw];
-    if (1) {
-      for_int(c, 3) nor[c] = *p++;
-    }
+    for_int(c, 3) nor[c] = *p++;
     if (pminfo._has_rgb) {
       for_int(c, 3) rgb[c] = *p++;
     } else {
@@ -400,7 +453,7 @@ void Vsplit::write(std::ostream& os, const PMeshInfo& pminfo) const {
   }
   write_binary_std(os, vad_large.dpoint.view());
   write_binary_std(os, vad_small.dpoint.view());
-  for (const PMWedgeAttribD& wad : ar_wad) {
+  for (const PmWedgeAttribD& wad : ar_wad) {
     if (1) write_binary_std(os, wad.dnormal.view());
     if (pminfo._has_rgb) write_binary_std(os, wad.drgb.view());
     if (pminfo._has_uv) write_binary_std(os, wad.duv.view());
@@ -453,7 +506,7 @@ int Vsplit::expected_wad_num(const PMeshInfo& pminfo) const {
 
 // *** AWMesh
 
-int AWMesh::most_clw_face(int v, int f) {
+int AWMesh::most_clw_face(int v, int f) const {
   int ff = f, lastf;
   do {
     lastf = ff;
@@ -462,7 +515,7 @@ int AWMesh::most_clw_face(int v, int f) {
   return (ff == k_undefined) ? lastf : k_undefined;
 }
 
-int AWMesh::most_ccw_face(int v, int f) {
+int AWMesh::most_ccw_face(int v, int f) const {
   int ff = f, lastf;
   do {
     lastf = ff;
@@ -471,33 +524,7 @@ int AWMesh::most_ccw_face(int v, int f) {
   return (ff == k_undefined) ? lastf : k_undefined;
 }
 
-bool AWMesh::is_boundary(int v, int f) { return most_ccw_face(v, f) != k_undefined; }
-
-bool AWMesh::gather_faces(int v, int f, Array<int>& faces) {
-  int ff = f;
-  faces.init(0);
-  do {
-    faces.push(ff);
-    ff = _fnei[ff].faces[mod3(get_jvf(v, ff) + 1)];
-  } while (ff != k_undefined && ff != f);
-  if (ff == f) return false;
-  ff = _fnei[f].faces[mod3(get_jvf(v, f) + 2)];
-  while (ff != k_undefined) {
-    faces.push(ff);
-    ff = _fnei[ff].faces[mod3(get_jvf(v, ff) + 2)];
-  }
-  return true;
-}
-
-void AWMesh::rotate_ccw(int v, int& w, int& f) const {
-  f = _fnei[f].faces[mod3(get_jvf(v, f) + 1)];
-  w = f == k_undefined ? k_undefined : get_wvf(v, f);
-}
-
-void AWMesh::rotate_clw(int v, int& w, int& f) const {
-  f = _fnei[f].faces[mod3(get_jvf(v, f) + 2)];
-  w = f == k_undefined ? k_undefined : get_wvf(v, f);
-}
+bool AWMesh::is_boundary(int v, int f) const { return most_ccw_face(v, f) != k_undefined; }
 
 void AWMesh::read(std::istream& is, const PMeshInfo& pminfo) {
   WMesh::read(is, pminfo);
@@ -514,7 +541,7 @@ void AWMesh::apply_vsplit(const Vsplit& vspl, const PMeshInfo& pminfo, Ancestry*
   const bool isr = vspl.vlr_offset1 > 1;
   // Allocate space for new faces now, since ar_pwedges points into _faces array.
   _faces.add(isr ? 2 : 1), _fnei.add(isr ? 2 : 1);  // !remember _fnei
-  // Get vertices, faces, and wedges in neigbhorhood.
+  // Get vertices, faces, and wedges in neighborhood.
   int vs;
   unsigned code = vspl.code;
   int ii = (code & Vsplit::II_MASK) >> Vsplit::II_SHIFT;
@@ -861,29 +888,29 @@ void AWMesh::apply_vsplit(const Vsplit& vspl, const PMeshInfo& pminfo, Ancestry*
   ASSERTX(!isr || _wedges[_faces[fr].wedges[2]].vertex == vt);
   // Update vertex attributes.
   {
-    PMVertexAttrib& vas = _vertices[vs].attrib;
-    PMVertexAttrib& vat = _vertices[vt].attrib;
+    PmVertexAttrib& va_s = _vertices[vs].attrib;
+    PmVertexAttrib& va_t = _vertices[vt].attrib;
     switch (ii) {
       case 2:
-        add(vat, vas, vspl.vad_large);
-        add(vas, vas, vspl.vad_small);
+        add(va_t, va_s, vspl.vad_large);
+        add(va_s, va_s, vspl.vad_small);
         break;
       case 0:
-        add(vat, vas, vspl.vad_small);
-        add(vas, vas, vspl.vad_large);
+        add(va_t, va_s, vspl.vad_small);
+        add(va_s, va_s, vspl.vad_large);
         break;
       case 1: {
-        PMVertexAttrib vam;
-        add(vam, vas, vspl.vad_small);
-        add(vat, vam, vspl.vad_large);
-        sub(vas, vam, vspl.vad_large);
+        PmVertexAttrib va_m;
+        add(va_m, va_s, vspl.vad_small);
+        add(va_t, va_m, vspl.vad_large);
+        sub(va_s, va_m, vspl.vad_large);
         break;
       }
       default: assertnever("");
     }
   }
   // Update wedge attributes.
-  PMWedgeAttrib awvtfr, awvsfr;
+  PmWedgeAttrib awvtfr, awvsfr;
   dummy_init(awvtfr, awvsfr);
   int lnum = 0;
   if (pminfo._has_wad2) {
@@ -917,13 +944,13 @@ void AWMesh::apply_vsplit(const Vsplit& vspl, const PMeshInfo& pminfo, Ancestry*
           add(_wedges[wvsfl].attrib, _wedges[!nt ? wvtfl : wvsfl].attrib, vspl.ar_wad[lnum++]);
           break;
         case 1: {
-          const PMWedgeAttribD& wad = vspl.ar_wad[lnum];
+          const PmWedgeAttribD& wad = vspl.ar_wad[lnum];
           if (!ns) {
-            const PMWedgeAttrib& wabase = _wedges[wvsfl].attrib;
+            const PmWedgeAttrib& wabase = _wedges[wvsfl].attrib;
             add(_wedges[wvtfl].attrib, wabase, wad);
             sub_reflect(_wedges[wvsfl].attrib, wabase, wad);
           } else {
-            const PMWedgeAttrib& wabase = _wedges[wvtfl].attrib;
+            const PmWedgeAttrib& wabase = _wedges[wvtfl].attrib;
             sub_reflect(_wedges[wvsfl].attrib, wabase, wad);
             add(_wedges[wvtfl].attrib, wabase, wad);
           }
@@ -954,11 +981,11 @@ void AWMesh::apply_vsplit(const Vsplit& vspl, const PMeshInfo& pminfo, Ancestry*
           break;
         case 1: {
           if (!ns) {
-            const PMWedgeAttrib& wabase = awvsfr;
+            const PmWedgeAttrib& wabase = awvsfr;
             if (ut) add(_wedges[wvtfr].attrib, wabase, vspl.ar_wad[lnum]);
             if (us) sub_reflect(_wedges[wvsfr].attrib, wabase, vspl.ar_wad[lnum]);
           } else {
-            const PMWedgeAttrib& wabase = awvtfr;
+            const PmWedgeAttrib& wabase = awvtfr;
             if (us) sub_reflect(_wedges[wvsfr].attrib, wabase, vspl.ar_wad[lnum]);
             if (ut) add(_wedges[wvtfr].attrib, wabase, vspl.ar_wad[lnum]);
           }
@@ -979,10 +1006,8 @@ void AWMesh::apply_vsplit(const Vsplit& vspl, const PMeshInfo& pminfo, Ancestry*
   ASSERTX(!isr || (attrib_ok(_wedges[wvsfr].attrib), true));
   ASSERTX(!isr || (attrib_ok(_wedges[wvrfr].attrib), true));
   // Deal with ancestry
-  if (ancestry) {
-    apply_vsplit_ancestry(ancestry, vs, isr, onumwedges, code, wvlfl, wvrfr, wvsfl, wvsfr, wvtfl, wvtfr);
-  }
-  // Final check.
+  if (ancestry) apply_vsplit_ancestry(ancestry, vs, isr, onumwedges, code, wvlfl, wvrfr, wvsfl, wvsfr, wvtfl, wvtfr);
+    // Final check.
 #if defined(HH_DEBUG)
   {
     int wvsflo = flccw == k_undefined ? k_undefined : get_wvf(vs, flccw);
@@ -999,7 +1024,8 @@ void AWMesh::apply_vsplit(const Vsplit& vspl, const PMeshInfo& pminfo, Ancestry*
 #endif
 GOTO_VSPLIT_WAD2:
   void();  // empty statement
-           // ok();
+  //
+  // ok();
 }
 
 void AWMesh::apply_vsplit_private(const Vsplit& vspl, const PMeshInfo& pminfo, Ancestry* ancestry) {
@@ -1011,13 +1037,13 @@ void AWMesh::apply_vsplit_ancestry(Ancestry* ancestry, int vs, bool isr, int onu
   const bool isl = true;
   // Vertex ancestry.
   {
-    Array<PMVertexAttrib>& vancestry = ancestry->_vancestry;
+    Array<PmVertexAttrib>& vancestry = ancestry->_vancestry;
     int vi = vancestry.add(1);
     // ASSERTX(vi == vt);
     vancestry[vi] = vancestry[vs];
   }
   // Wedge ancestry.
-  Array<PMWedgeAttrib>& wancestry = ancestry->_wancestry;
+  Array<PmWedgeAttrib>& wancestry = ancestry->_wancestry;
   wancestry.resize(_wedges.num());
   // If ambiguities in inside wedges, set no ancestor.
   if (0) {
@@ -1163,7 +1189,7 @@ void AWMesh::undo_vsplit(const Vsplit& vspl, const PMeshInfo& pminfo) {
   if (flclw >= 0) _fnei[flclw].faces[mod3(jlclw + 1)] = flccw;
   if (frccw >= 0) _fnei[frccw].faces[mod3(jrccw + 2)] = frclw;
   if (frclw >= 0) _fnei[frclw].faces[mod3(jrclw + 1)] = frccw;
-  // Propagate wedges id's across collapsed faces if can go thru.
+  // Propagate wedges id's across collapsed faces if can go through.
   int ffl = flclw, ffr = frccw;
   int jjl = jlclw, jjr = jrccw;
   int* pwwl;
@@ -1227,27 +1253,27 @@ void AWMesh::undo_vsplit(const Vsplit& vspl, const PMeshInfo& pminfo) {
   for (int w : ar_wmodif) _wedges[w].vertex = vs;
   // Update vertex attributes.
   {
-    PMVertexAttrib& vas = _vertices[vs].attrib;
-    PMVertexAttrib& vat = _vertices[vt].attrib;
+    PmVertexAttrib& va_s = _vertices[vs].attrib;
+    PmVertexAttrib& va_t = _vertices[vt].attrib;
     switch (ii) {
-      case 2: sub(vas, vas, vspl.vad_small); break;
-      case 0: sub(vas, vat, vspl.vad_small); break;
+      case 2: sub(va_s, va_s, vspl.vad_small); break;
+      case 0: sub(va_s, va_t, vspl.vad_small); break;
       case 1:
         if (0) {
-          PMVertexAttrib vam;
-          interp(vam, vas, vat, 0.5f);
-          sub(vas, vam, vspl.vad_small);
+          PmVertexAttrib va_m;
+          interp(va_m, va_s, va_t, 0.5f);
+          sub(va_s, va_m, vspl.vad_small);
         } else {
           // slightly faster
-          sub(vas, vat, vspl.vad_large);
-          sub(vas, vas, vspl.vad_small);
+          sub(va_s, va_t, vspl.vad_large);
+          sub(va_s, va_s, vspl.vad_small);
         }
         break;
       default: assertnever("");
     }
   }
-  // Udpate wedge attributes.
-  PMWedgeAttrib awvtfr, awvsfr;
+  // Update wedge attributes.
+  PmWedgeAttrib awvtfr, awvsfr;
   dummy_init(awvtfr, awvsfr);
   bool problem = false;
   if (pminfo._has_wad2) {
@@ -1273,13 +1299,13 @@ void AWMesh::undo_vsplit(const Vsplit& vspl, const PMeshInfo& pminfo) {
           break;
         case 0: _wedges[wvsfl].attrib = _wedges[wvtfl].attrib; break;
         case 1: {
-          PMWedgeAttrib wa;
+          PmWedgeAttrib wa;
           if (0) {
             interp(wa, _wedges[wvsfl].attrib, _wedges[wvtfl].attrib, 0.5f);
           } else {
             // faster because avoid normalization of interp()
             const int lnum = 0;
-            const PMWedgeAttribD& wad = vspl.ar_wad[lnum];
+            const PmWedgeAttribD& wad = vspl.ar_wad[lnum];
             sub_noreflect(wa, _wedges[wvtfl].attrib, wad);
           }
           _wedges[wvsfl].attrib = wa;
@@ -1307,7 +1333,7 @@ void AWMesh::undo_vsplit(const Vsplit& vspl, const PMeshInfo& pminfo) {
           if (!ns) _wedges[wvsfr].attrib = awvtfr;
           break;
         case 1: {
-          PMWedgeAttrib wa;
+          PmWedgeAttrib wa;
           interp(wa, awvsfr, awvtfr, 0.5f);
           if (!ns) _wedges[wvsfr].attrib = wa;
           if (!nt && !thru_r) _wedges[wvtfr].attrib = wa;
@@ -1421,6 +1447,42 @@ void AWMesh::ok() const {
   }
 }
 
+void AWMesh::split_edge(int f, int j, float frac1) {
+  assertx(_wedges.num() == _vertices.num());  // Simpler case for now.
+  const int w1 = _faces[f].wedges[j];
+  const int w2 = _faces[f].wedges[mod3(j + 1)];
+  const int v1 = _wedges[w1].vertex;
+  const int v2 = _wedges[w2].vertex;
+  const int f2 = _fnei[f].faces[mod3(j + 2)];
+  assertx(f2 >= 0);                // Mesh is assumed to have no boundaries.
+  const int j2 = get_jvf(v2, f2);  // Index of v2 within f2; mod3(j2 + 1) is index of v1 within f2.
+  const int ws1 = _faces[f].wedges[mod3(j + 2)];
+  const int ws2 = _faces[f2].wedges[mod3(j2 + 2)];
+  const int vnew = _vertices.add(1);
+  const int wnew = _wedges.add(1);
+  const int fnew1 = _faces.add(1);
+  const int fnew2 = _faces.add(1);
+  _fnei.add(2);
+  interp(_vertices[vnew].attrib, _vertices[v1].attrib, _vertices[v2].attrib, frac1);
+  _wedges[wnew].vertex = vnew;
+  interp(_wedges[wnew].attrib, _wedges[w1].attrib, _wedges[w2].attrib, frac1);
+  _faces[fnew1].wedges = V(wnew, w2, ws1);
+  _faces[fnew1].attrib = _faces[f].attrib;
+  _faces[fnew2].wedges = V(w2, wnew, ws2);
+  _faces[fnew2].attrib = _faces[f2].attrib;
+  _faces[f].wedges[mod3(j + 1)] = wnew;
+  _faces[f2].wedges[j2] = wnew;
+  const auto fnei1 = _fnei[f].faces;
+  const auto fnei2 = _fnei[f2].faces;
+  const auto replace = [](auto& vec, auto oldval, auto newval) { vec[index(vec, oldval)] = newval; };
+  replace(_fnei[fnei1[j]].faces, f, fnew1);
+  replace(_fnei[fnei2[mod3(j2 + 1)]].faces, f2, fnew2);
+  _fnei[f].faces[j] = fnew1;
+  _fnei[f2].faces[mod3(j2 + 1)] = fnew2;
+  _fnei[fnew1].faces = V(fnei1[j], f, fnew2);
+  _fnei[fnew2].faces = V(f2, fnei2[mod3(j2 + 1)], fnew1);
+}
+
 void AWMesh::construct_adjacency() {
   _fnei.init(_faces.num());
   Map<std::pair<int, int>, int> mvv_face;  // (Vertex, Vertex) -> Face
@@ -1429,7 +1491,7 @@ void AWMesh::construct_adjacency() {
       int j1 = mod3(j + 1), j2 = mod3(j + 2);
       int v0 = _wedges[_faces[f].wedges[j1]].vertex;
       int v1 = _wedges[_faces[f].wedges[j2]].vertex;
-      mvv_face.enter(std::make_pair(v0, v1), f);
+      mvv_face.enter(std::pair(v0, v1), f);
     }
   }
   for_int(f, _faces.num()) {
@@ -1438,7 +1500,7 @@ void AWMesh::construct_adjacency() {
       int v0 = _wedges[_faces[f].wedges[j1]].vertex;
       int v1 = _wedges[_faces[f].wedges[j2]].vertex;
       bool present;
-      int fn = mvv_face.retrieve(std::make_pair(v1, v0), present);
+      int fn = mvv_face.retrieve(std::pair(v1, v0), present);
       _fnei[f].faces[j] = present ? fn : k_undefined;
     }
   }
@@ -1455,20 +1517,27 @@ PMesh::PMesh() {
   _info._full_bbox[1] = Point(BIGFLOAT, BIGFLOAT, BIGFLOAT);
 }
 
+PMesh::PMesh(AWMesh&& awmesh, const PMeshInfo& pminfo) : _base_mesh(std::move(awmesh)), _info(pminfo) {
+  _info._tot_nvsplits = 0;
+  _info._full_nvertices = _base_mesh._vertices.num();
+  _info._full_nwedges = _base_mesh._wedges.num();
+  _info._full_nfaces = _base_mesh._faces.num();
+  _info._full_bbox = Bbox{transform(_base_mesh._vertices, [](auto& v) { return v.attrib.point; })};
+}
+
 void PMesh::read(std::istream& is) {
   PMeshRStream pmrs(is, this);
   pmrs.read_base_mesh();
-  for (;;) {
+  for (;;)
     if (!pmrs.next_vsplit()) break;
-  }
 }
 
 void PMesh::write(std::ostream& os) const {
   os << "PM\n";
   os << "version=2\n";
-  os << sform("nvsplits=%d nvertices=%d nwedges=%d nfaces=%d\n", _info._tot_nvsplits, _info._full_nvertices,
-              _info._full_nwedges, _info._full_nfaces);
-  const Bbox& bbox = _info._full_bbox;
+  os << sform("nvsplits=%d nvertices=%d nwedges=%d nfaces=%d\n",  //
+              _info._tot_nvsplits, _info._full_nvertices, _info._full_nwedges, _info._full_nfaces);
+  const auto& bbox = _info._full_bbox;
   os << sform("bbox %g %g %g  %g %g %g\n", bbox[0][0], bbox[0][1], bbox[0][2], bbox[1][0], bbox[1][1], bbox[1][2]);
   os << sform("has_rgb=%d\n", _info._has_rgb);
   os << sform("has_uv=%d\n", _info._has_uv);
@@ -1477,17 +1546,17 @@ void PMesh::write(std::ostream& os) const {
   os << "PM base mesh:\n";
   _base_mesh.write(os, _info);
   for_int(i, _vsplits.num()) _vsplits[i].write(os, _info);
-  os << '\xFF';
+  os << uchar(k_magic_first_byte);
   os << "End of PM\n";
   assertx(os);
 }
 
 PMeshInfo PMesh::read_header(std::istream& is) {
   PMeshInfo pminfo;
-  for (string sline;;) {
-    assertx(my_getline(is, sline));
-    if (sline == "" || sline[0] == '#') continue;
-    assertx(sline == "PM");
+  for (string line;;) {
+    assertx(my_getline(is, line));
+    if (line == "" || line[0] == '#') continue;
+    assertx(line == "PM");
     break;
   }
   // default for version 1 compatibility
@@ -1504,51 +1573,53 @@ PMeshInfo PMesh::read_header(std::istream& is) {
   pminfo._full_nfaces = 0;
   pminfo._full_bbox[0] = Point(BIGFLOAT, BIGFLOAT, BIGFLOAT);
   pminfo._full_bbox[1] = Point(BIGFLOAT, BIGFLOAT, BIGFLOAT);
-  for (string sline;;) {
-    assertx(my_getline(is, sline));
-    const char* s2 = sline.c_str();
-    if (0) {
-    } else if (!strncmp(s2, "version=", 8)) {
-      assertx(sscanf(s2, "version=%d", &pminfo._read_version) == 1);
-    } else if (!strncmp(s2, "nvsplits=", 9)) {
-      assertx(sscanf(s2, "nvsplits=%d nvertices=%d nwedges=%d nfaces=%d", &pminfo._tot_nvsplits,
-                     &pminfo._full_nvertices, &pminfo._full_nwedges, &pminfo._full_nfaces) == 4);
-    } else if (!strncmp(s2, "bbox ", 5)) {
-      Bbox& bbox = pminfo._full_bbox;
-      assertx(sscanf(s2, "bbox %g %g %g  %g %g %g", &bbox[0][0], &bbox[0][1], &bbox[0][2], &bbox[1][0], &bbox[1][1],
-                     &bbox[1][2]) == 6);
-    } else if (!strncmp(s2, "has_rgb=", 8)) {
-      int i;
-      assertx(sscanf(s2, "has_rgb=%d", &i) == 1);
-      pminfo._has_rgb = narrow_cast<bool>(i);
-    } else if (!strncmp(s2, "has_uv=", 7)) {
-      int i;
-      assertx(sscanf(s2, "has_uv=%d", &i) == 1);
-      pminfo._has_uv = narrow_cast<bool>(i);
-    } else if (!strncmp(s2, "has_resid=", 10)) {
-      int i;
-      assertx(sscanf(s2, "has_resid=%d", &i) == 1);
-      pminfo._has_resid = narrow_cast<bool>(i);
-    } else if (!strncmp(s2, "has_wad2=", 9)) {
-      int i;
-      assertx(sscanf(s2, "has_wad2=%d", &i) == 1);
-      pminfo._has_wad2 = narrow_cast<bool>(i);
-    } else if (!strcmp(s2, "PM base mesh:")) {
-      break;
-    } else {
-      Warning("PMesh header string unknown");
-      showf("PMesh header string not recognized '%s'\n", s2);
+  for (string line;;) {
+    assertx(my_getline(is, line));
+    const char* sline = line.c_str();
+    if (const char* s = after_prefix(sline, "version=")) {
+      pminfo._read_version = to_int(s);
+      continue;
     }
+    if (const char* s = after_prefix(sline, "nvsplits=")) {
+      pminfo._tot_nvsplits = int_from_chars(s);
+      s = assertx(after_prefix(s, " nvertices=")), pminfo._full_nvertices = int_from_chars(s);
+      s = assertx(after_prefix(s, " nwedges=")), pminfo._full_nwedges = int_from_chars(s);
+      s = assertx(after_prefix(s, " nfaces=")), pminfo._full_nfaces = int_from_chars(s);
+      assert_no_more_chars(s);
+      continue;
+    }
+    if (const char* s = after_prefix(sline, "bbox ")) {
+      for_int(i, 2) for_int(j, 3) pminfo._full_bbox[i][j] = float_from_chars(s);
+      assert_no_more_chars(s);
+      continue;
+    }
+    if (const char* s = after_prefix(sline, "has_rgb=")) {
+      pminfo._has_rgb = narrow_cast<bool>(to_int(s));
+      continue;
+    }
+    if (const char* s = after_prefix(sline, "has_uv=")) {
+      pminfo._has_uv = narrow_cast<bool>(to_int(s));
+      continue;
+    }
+    if (const char* s = after_prefix(sline, "has_resid=")) {
+      pminfo._has_resid = narrow_cast<bool>(to_int(s));
+      continue;
+    }
+    if (const char* s = after_prefix(sline, "has_wad2=")) {
+      pminfo._has_wad2 = narrow_cast<bool>(to_int(s));
+      continue;
+    }
+    if (!strcmp(sline, "PM base mesh:")) break;
+    Warning("PMesh header string unknown");
+    showf("PMesh header string not recognized '%s'\n", sline);
   }
-  assertw(pminfo._tot_nvsplits);
+  // assertw(pminfo._tot_nvsplits);
   assertw(pminfo._full_nvertices);
   assertw(pminfo._full_nwedges);
   assertw(pminfo._full_nfaces);
   assertw(pminfo._full_bbox[0][0] != BIGFLOAT);
   return pminfo;
 }
-
-bool PMesh::at_trailer(std::istream& is) { return is.peek() == k_magic_first_byte; }
 
 void PMesh::truncate_beyond(PMeshIter& pmi) {
   PMeshRStream& pmrs = pmi._pmrs;
@@ -1591,9 +1662,7 @@ void PMeshRStream::read_base_mesh(AWMesh* bmesh) {
     assertx(_pm);
     if (bmesh) *bmesh = _pm->_base_mesh;
   } else {
-    if (!_pm & !bmesh) {
-      Warning("strange, why are we doing this?");
-    }
+    if (!_pm && !bmesh) Warning("strange, why are we doing this?");
     unique_ptr<AWMesh> tbmesh = !_pm && !bmesh ? make_unique<AWMesh>() : nullptr;
     AWMesh& rbmesh = _pm ? _pm->_base_mesh : bmesh ? *bmesh : *tbmesh;
     rbmesh.read(*_is, _info);
@@ -1625,9 +1694,10 @@ const Vsplit* PMeshRStream::peek_next_vsplit() {
   if (PMesh::at_trailer(*_is)) return nullptr;
   Vsplit* pvspl;
   if (_pm) {
-    if (!_pm->_vsplits.num()) _pm->_vsplits.reserve(_pm->_info._tot_nvsplits);
-    _pm->_vsplits.access(_vspliti);
-    pvspl = &_pm->_vsplits[_vspliti];
+    Array<Vsplit>& vsplits = _pm->_vsplits;
+    if (!vsplits.num()) vsplits.reserve(_pm->_info._tot_nvsplits);  // Note: initializes all ar_wad members.
+    vsplits.access(_vspliti);
+    pvspl = &vsplits[_vspliti];
   } else {
     pvspl = &_tmp_vspl;
     _vspl_ready = true;
@@ -1639,9 +1709,10 @@ const Vsplit* PMeshRStream::peek_next_vsplit() {
 const Vsplit* PMeshRStream::next_vsplit() {
   assertx(_vspliti >= 0);
   if (_pm) {
-    if (_vspliti < _pm->_vsplits.num()) {
+    Array<Vsplit>& vsplits = _pm->_vsplits;
+    if (_vspliti < vsplits.num()) {
       _vspliti++;
-      return &_pm->_vsplits[_vspliti - 1];
+      return &vsplits[_vspliti - 1];
     }
     if (!_is) return nullptr;  // end of array
   } else if (_vspl_ready) {
@@ -1653,10 +1724,11 @@ const Vsplit* PMeshRStream::next_vsplit() {
   if (PMesh::at_trailer(*_is)) return nullptr;
   Vsplit* pvspl;
   if (_pm) {
-    if (!_pm->_vsplits.num()) _pm->_vsplits.reserve(_pm->_info._tot_nvsplits);
+    Array<Vsplit>& vsplits = _pm->_vsplits;
+    if (!vsplits.num()) vsplits.reserve(_pm->_info._tot_nvsplits);
     _vspliti++;
-    _pm->_vsplits.resize(_vspliti);
-    pvspl = &_pm->_vsplits[_vspliti - 1];
+    vsplits.resize(_vspliti);
+    pvspl = &vsplits.last();
   } else {
     pvspl = &_tmp_vspl;
   }
@@ -1757,13 +1829,11 @@ bool Geomorph::construct(PMeshIter& pmi, EWant want, int num) {
   //  with different attributes, and these perhaps should be morphed (between their original values in
   //  j and their final values in k).
   // They are morphed here but not in Filterprog.cpp.
-  // 970516: this is the reason why I didn't let the Ancestry class contain
-  // ancestry relations (and record the attributes of M^c): I would not
-  // have available to me the original attributes of an orphan wedge
-  // introduced in M^j which was subsequently changed.  The only solution is
-  // to carry the attributes explicitly as I currently do,
-  // or allocate a separate array to record the attributes of orphan wedges
-  // when they are first created, which doesn't seem so nice.
+  // 1997-05-16: this is the reason why we didn't let the Ancestry class contain ancestry relations (and record the
+  // attributes of M^c): we would be missing the original attributes of an orphan wedge introduced in M^j that was
+  // subsequently changed.  The only solution is to carry the attributes explicitly as is currently done,
+  // or to allocate a separate array to record the attributes of orphan wedges when they are first created,
+  // which does not seem so nice.
   bool ret = true;
   assertx(!_vertices.num() && !_vgattribs.num() && !_wgattribs.num());
   // Initialize ancestry to current attributes (identity).
@@ -1843,13 +1913,10 @@ bool Geomorph::construct_goto_nfaces(PMeshIter& pmi, int nfaces) { return constr
 
 void Geomorph::evaluate(float alpha) {
   assertx(alpha >= 0.f && alpha < 1.f);
-  const float f1 = 1.f - alpha;
-  for (const PMVertexAttribG& ag : _vgattribs) {
-    interp(_vertices[ag.vertex].attrib, ag.attribs[0], ag.attribs[1], f1);
-  }
-  for (const PMWedgeAttribG& ag : _wgattribs) {
-    interp(_wedges[ag.wedge].attrib, ag.attribs[0], ag.attribs[1], f1);
-  }
+  const float frac1 = 1.f - alpha;
+  for (const PmVertexAttribG& ag : _vgattribs)
+    interp(_vertices[ag.vertex].attrib, ag.attribs[0], ag.attribs[1], frac1);
+  for (const PmWedgeAttribG& ag : _wgattribs) interp(_wedges[ag.wedge].attrib, ag.attribs[0], ag.attribs[1], frac1);
 }
 
 // *** SMesh
@@ -1867,8 +1934,8 @@ SMesh::SMesh(const WMesh& wmesh)
   }
 }
 
-void SMesh::extract_gmesh(GMesh& gmesh, int has_rgb, int has_uv) const {
-  assertx(!gmesh.num_vertices());
+GMesh SMesh::extract_gmesh(int has_rgb, int has_uv) const {
+  GMesh gmesh;
   string str;
   for_int(v, _vertices.num()) {
     Vertex gv = gmesh.create_vertex();
@@ -1881,7 +1948,7 @@ void SMesh::extract_gmesh(GMesh& gmesh, int has_rgb, int has_uv) const {
       gmesh.update_string(gv, "rgb", csform_vec(str, col));
     }
     if (has_uv) {
-      const UV& uv = _vertices[v].attrib.w.uv;
+      const Uv& uv = _vertices[v].attrib.w.uv;
       gmesh.update_string(gv, "uv", csform_vec(str, uv));
     }
   }
@@ -1896,6 +1963,7 @@ void SMesh::extract_gmesh(GMesh& gmesh, int has_rgb, int has_uv) const {
     int matid = _faces[f].attrib.matid & ~AWMesh::k_Face_visited_mask;
     gmesh.set_string(gf, _materials.get(matid).c_str());
   }
+  return gmesh;
 }
 
 // *** SGeomorph
@@ -1924,14 +1992,13 @@ SGeomorph::SGeomorph(const Geomorph& geomorph) : SMesh(geomorph) {
 
 void SGeomorph::evaluate(float alpha) {
   assertx(alpha >= 0.f && alpha < 1.f);
-  const float f1 = 1.f - alpha;
-  for (const PMSVertexAttribG& ag : _vgattribs) {
-    interp(_vertices[ag.vertex].attrib, ag.attribs[0], ag.attribs[1], f1);
-  }
+  const float frac1 = 1.f - alpha;
+  for (const PmSVertexAttribG& ag : _vgattribs)
+    interp(_vertices[ag.vertex].attrib, ag.attribs[0], ag.attribs[1], frac1);
 }
 
-void SGeomorph::extract_gmesh(GMesh& gmesh, int has_rgb, int has_uv) const {
-  SMesh::extract_gmesh(gmesh, has_rgb, has_uv);
+GMesh SGeomorph::extract_gmesh(int has_rgb, int has_uv) const {
+  GMesh gmesh = SMesh::extract_gmesh(has_rgb, has_uv);
   Array<int> mvvg(_vertices.num(), -1);
   for_int(vg, _vgattribs.num()) mvvg[_vgattribs[vg].vertex] = vg;
   string str;
@@ -1939,7 +2006,7 @@ void SGeomorph::extract_gmesh(GMesh& gmesh, int has_rgb, int has_uv) const {
     Vertex gv = gmesh.id_vertex(v + 1);
     int vg = mvvg[v];
     if (vg >= 0) assertx(_vgattribs[vg].vertex == v);
-    const PMSVertexAttrib& va0 = vg < 0 ? _vertices[v].attrib : _vgattribs[vg].attribs[0];
+    const PmSVertexAttrib& va0 = vg < 0 ? _vertices[v].attrib : _vgattribs[vg].attribs[0];
     const Point& opos = va0.v.point;
     gmesh.update_string(gv, "Opos", csform_vec(str, opos));
     const Vector& onor = va0.w.normal;
@@ -1949,10 +2016,11 @@ void SGeomorph::extract_gmesh(GMesh& gmesh, int has_rgb, int has_uv) const {
       gmesh.update_string(gv, "Orgb", csform_vec(str, col));
     }
     if (has_uv) {
-      const UV& uv = va0.w.uv;
+      const Uv& uv = va0.w.uv;
       gmesh.update_string(gv, "Ouv", csform_vec(str, uv));
     }
   }
+  return gmesh;
 }
 
 }  // namespace hh

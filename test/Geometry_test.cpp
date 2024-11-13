@@ -8,13 +8,12 @@ using namespace hh;
 
 namespace {
 
-template <typename R, typename = enable_if_range_t<R>> R truncate_small_floats(R&& range) {
-  using T = iterator_t<R>;
-  static_assert(std::is_floating_point<T>::value, "range must contain elements of type float/double");
-  for (auto& e : range) {
+template <typename Range, typename = enable_if_range_t<Range>> Range truncate_small_floats(Range&& range) {
+  using T = range_value_t<Range>;
+  static_assert(std::is_floating_point_v<T>, "range must contain elements of type float/double");
+  for (auto& e : range)
     if (abs(e) < 1e-6f) e = 0.f;
-  }
-  return std::forward<R>(range);
+  return std::forward<Range>(range);
 }
 
 }  // namespace
@@ -50,12 +49,12 @@ int main() {
     SHOW(q);
     // SHOW(~f2);
     Frame f2inv = ~f2;
-    truncate_small_floats(ArView(&f2inv[0][0], 12));
+    truncate_small_floats(f2inv);
     SHOW(f2inv);
     SHOW(f2 * f2);
     SHOW(q * inverse(f2));
     Frame ff = f3 * f * ~f2 * Frame::identity() * ~Frame::identity();
-    truncate_small_floats(ArView(&ff[0][0], 12));
+    truncate_small_floats(ff);
     SHOW(ff);
     Frame zero = Frame::scaling(thrice(0.f));
     SHOW(zero);
@@ -71,25 +70,25 @@ int main() {
     hf[1][3] = 4.f;
     hf[3][3] = 0.f;
     SHOW(hf);
-    // Point p = Point(2.f, 3.f, 4.f);
+    // Point p(2.f, 3.f, 4.f);
     Array<float> p{2.f, 3.f, 4.f, 1.f};
     SHOW(p);
     SHOW(mat_mul(p, hf.view()));
   }
   {
     constexpr Vector v1(1.f, 2.f, 3.f), v2(4.f, 5.f, 3.f);
-    constexpr float d = dot(v1, v2);
+    const float d = dot(v1, v2);
     SHOW(d);
     const float m = mag(v1);
     SHOW(m);
-    constexpr Vector vcross = cross(v1, v2);
+    const Vector vcross = cross(v1, v2);
     SHOW(vcross);
     const Frame frame(v1, v1, v2, Point(10.f, 10.f, 10.f));
     const Point origin = frame.p();
     SHOW(origin);
   }
   {
-    constexpr auto vdeg = to_deg(D_TAU / 5);
+    constexpr auto vdeg = deg_from_rad(D_TAU / 5);
     SHOW(vdeg);
   }
   {

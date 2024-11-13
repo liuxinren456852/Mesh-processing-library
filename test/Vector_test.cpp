@@ -12,15 +12,15 @@ namespace {
 
 void test_stack() {
   {
-    struct ST {
-      explicit ST(int i) : _i(i) {}
+    struct S {
+      explicit S(int i) : _i(i) {}
       int _i;
     };
-    std::vector<const ST*> s;
+    std::vector<const S*> s;
     assertx(s.empty());
-    s.push_back(new ST(1));  // never deleted
-    s.push_back(new ST(2));
-    s.push_back(new ST(3));
+    s.push_back(new S(1));  // never deleted
+    s.push_back(new S(2));
+    s.push_back(new S(3));
     assertw(vec_pop(s)->_i == 3);
     assertw(vec_pop(s)->_i == 2);
     assertw(vec_pop(s)->_i == 1);
@@ -82,9 +82,8 @@ void test_stack() {
 // *** from Queue_test.cpp
 
 template <typename T> bool queue_contains(const std::deque<T>& queue, const T& e) {
-  for (auto& ee : queue) {
+  for (auto& ee : queue)
     if (e == ee) return true;
-  }
   return false;
 }
 
@@ -125,9 +124,8 @@ void test_queue() {
 // *** from HList_test
 
 template <typename T> bool list_contains(const std::list<T>& l, const T& e) {
-  for (const auto& ee : l) {
+  for (const auto& ee : l)
     if (e == ee) return true;
-  }
   return false;
 }
 

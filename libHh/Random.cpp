@@ -16,7 +16,7 @@ class Random::Implementation {
     _engine.seed(seedv ^ Engine::default_seed);  // my default zero seed should map to engine's default_seed
   }
   uint32_t operator()() { return _engine(); }
-  static constexpr uint32_t k_expected_first_value = 3499211612;
+  static constexpr uint32_t k_expected_first_value = 3'499'211'612;
 };
 
 int Random::g_init() {
@@ -53,7 +53,7 @@ template <> inline uint64_t Random::get_int<8>() {
   return v | (static_cast<uint64_t>(get_int<4>()) << 32);
 }
 
-// http://stackoverflow.com/questions/11603818/why-is-there-ambiguity-between-uint32-t-and-uint64-t-when-using-size-t-on-mac-os
+// https://stackoverflow.com/questions/11603818/why-is-there-ambiguity-between-uint32-t-and-uint64-t-when-using-size-t-on-mac-os
 //  Mac: using uint32_t = unsigned int; using uint64_t = unsigned long long; using size_t = unsigned long;
 unsigned Random::get_unsigned() { return get_int<sizeof(unsigned)>(); }
 uint64_t Random::get_uint64() { return get_int<sizeof(uint64_t)>(); }

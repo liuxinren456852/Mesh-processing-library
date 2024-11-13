@@ -1,7 +1,7 @@
 // -*- C++ -*-  Copyright (c) Microsoft Corporation; see license.txt
 #include "libHh/Vector4.h"
 
-// #include <iomanip>  // std::setprecision()
+// #include <iomanip>  // setprecision()
 
 #include "libHh/Array.h"
 #include "libHh/Vec.h"
@@ -71,7 +71,7 @@ int main() {
   }
   {
     to_norm(Vector4(0.f, 0.49f / 255.f, 0.51f / 255.f, 1.51f / 255.f));
-    to_norm(Vector4(-10.f, .5f, 10000.f, 0.f));
+    to_norm(Vector4(-10.f, .5f, 1e4f, 0.f));
     to_norm(Vector4(23.f, 37.f, 45.f, 255.f) / 255.f);
     to_norm(Vector4(0.f, 1.f, 2.f, 3.f) / 255.f);
     to_norm(Vector4(100.f, 101.f, 102.f, 103.f) / 255.f);
@@ -82,9 +82,9 @@ int main() {
   }
 #if 0
   {
-    // fails: static_assert(std::is_trivially_copyable<Vector4>::value, "");
+    // Fails: static_assert(std::is_trivially_copyable_v<Vector4>);
 #if defined(HH_VECTOR4_SSE)
-    static_assert(std::is_trivially_copyable<__m128>::value, "");  // true
+    static_assert(std::is_trivially_copyable_v<__m128>);  // true
 #endif
   }
 #endif

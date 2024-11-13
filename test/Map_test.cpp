@@ -13,10 +13,14 @@ int main() {
   if (0) {  // timing test
     Map<int, int> m;
     SHOW(m.num());
-    for_int(i, 1000000) m.enter(i, 1);  // now this is somewhat slow (4.5sec) in Debug under VC2012!
+    for_int(i, 1'000'000) m.enter(i, 1);  // now this is somewhat slow (4.5sec) in Debug under VC2012!
     SHOW("after end");
     m.clear();  // slow with _ITERATOR_DEBUG_LEVEL == 2 (in Debug) under VC2010!
     SHOW("after clear");
+  }
+  {
+    const Map<string, int> map = {{"first", 1}, {"second", 2}};
+    assertx(map.get("second") == 2);
   }
   {
     Map<int, int> m;
@@ -35,12 +39,12 @@ int main() {
     assertw(m.remove(998) == 999);
     assertw(!m.contains(998));
     assertw(m.retrieve(2) == 2 * 8);
-    for_map_key_value(m, [&](int k, int v) { assertw(k * 8 == v); });
+    for (auto& [k, v] : m) assertw(k * 8 == v);
     int sk = 0, sv = 0;
-    for_map_key_value(m, [&](const int& k, const int& v) {
+    for (auto& [k, v] : m) {
       sk += k;
       sv += v;
-    });
+    }
     assertw(sk == (0 + 99) * (100 / 2));
     assertw(sv == (0 + 99 * 8) * (100 / 2));
     assertw(!m.contains(100));
@@ -49,10 +53,10 @@ int main() {
     assertw(m.num() == 50);
     sk = 0;
     sv = 0;
-    for_map_key_value(m, [&](int k, int v) {
+    for (auto& [k, v] : m) {
       sk += k;
       sv += v;
-    });
+    }
     assertw(sk == (50 + 99) * (50 / 2));
     assertw(sv == (50 * 8 + 99 * 8) * (50 / 2));
     sk = 0;
@@ -91,10 +95,10 @@ int main() {
   {
     using TU = std::tuple<float, float>;
     Map<TU, int> m;
-    m.enter(std::make_tuple(2.f, 2.f), 3);
-    m.enter(std::make_tuple(2.f, 3.f), 4);
-    m.enter(std::make_tuple(3.f, 3.f), 5);
-    SHOW(m.get(std::make_tuple(2.f, 3.f)));
+    m.enter(std::tuple(2.f, 2.f), 3);
+    m.enter(std::tuple(2.f, 3.f), 4);
+    m.enter(std::tuple(3.f, 3.f), 5);
+    SHOW(m.get(std::tuple(2.f, 3.f)));
     // for (const TU& tu : m.keys()) SHOW(tu);
     SHOW(sum(m.values()));
   }
@@ -133,8 +137,7 @@ int main() {
     assertx(m.get("abcd") == "113");
     assertx(m.get("ab") == "14");
     assertx(m["abcd"] == "113");
-    Array<string> ar;
-    for (const string& k : m.keys()) ar.push(k);
+    Array<string> ar(m.keys());
     sort(ar);
     for (const string& s : ar) SHOW(s, m[s]);
     assertx(m.remove("ab") == "14");
@@ -143,17 +146,21 @@ int main() {
 }
 
 namespace hh {
+
 template class Map<int, int>;
 template class Map<Point, int, std::hash<Vec3<float>>>;
 template class Map<string, string>;
 
 using U = unique_ptr<int>;
-template <> U Map<int, U>::replace(const int&, const U&) { return U(); }  // definition illegal
-template <> void Map<int, U>::enter(const int&, const U&) {}              // definition illegal
-template <> void Map<int, U>::enter(int&&, const U&) {}                   // definition illegal
+// Override illegal definitions for U:
+template <> Map<int, U>::Map(std::initializer_list<std::pair<const int, U>>) {}
+template <> U Map<int, U>::replace(const int&, const U&) { return U(); }
+template <> void Map<int, U>::enter(const int&, const U&) {}
+template <> void Map<int, U>::enter(int&&, const U&) {}
 template <> U& Map<int, U>::enter(const int&, const U&, bool&) {
   static U u;
   return u;
 }
 template class Map<int, U>;
+
 }  // namespace hh

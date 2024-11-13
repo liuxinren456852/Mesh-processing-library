@@ -7,7 +7,7 @@
 
 namespace hh {
 
-// Precomputed cosf() and sinf() functions over integer divisions of TAU.
+// Precomputed cos() and sin() functions over integer divisions of TAU.
 class Trig {
  public:
   // compute cos(i * TAU / j)
@@ -50,35 +50,24 @@ class Trig {
   }
 };
 
-namespace details {
-inline int fix_mod(int ret, int b) {
+// Modulo operation.  (The built-in C/C++ remainder operation (a % b) returns negative remainders if a < 0).
+inline constexpr int my_mod(int a, int b) {
+  // https://stackoverflow.com/questions/4003232/
+  // Note: given int a >= 0, my_mod(a - 1, n) is still not as fast as (a - 1 + n) % n.
+  ASSERTX(b > 0);
+  int ret = a % b;
   return ret < 0 ? ret + b : ret;
   // return ret + b * (ret < 0);
   // b &= -(ret < 0); return ret + b;
 }
-template <typename T> bool my_mod_check(T ret, T b) {
-  if (!(ret >= T{0} && ret < b)) {
-    SHOW(ret, b);
-    assertnever("");
-  }
-  return true;
-}
-}  // namespace details
-
-// Modulo operation.  (The built-in C/C++ remainder operation (a % b) returns negative remainders if a < 0).
-inline int my_mod(int a, int b) {
-  // http://stackoverflow.com/questions/4003232/
-  // Note: given int a >= 0, my_mod(a - 1, n) is still not as fast as (a - 1 + n) % n.
-  return (ASSERTX(b > 0), details::fix_mod(a % b, b));
-}
 
 // Modulo operation on floating-point values.  (In contrast, std::fmod(a, b) returns negative remainders if a < 0.f).
 template <typename T> T my_mod(T a, T b) {
-  static_assert(std::is_floating_point<T>::value, "");
+  static_assert(std::is_floating_point_v<T>);
   ASSERTX(b > T{0});
   T ret = std::fmod(a, b);
   if (ret < T{0}) ret += b;
-  ASSERTX(details::my_mod_check(ret, b));
+  ASSERTX(ret >= T{0} && ret < b);
   return ret;
 }
 
@@ -88,19 +77,19 @@ float eval_uniform_bspline(CArrayView<float> ar, int deg, float t);
 
 // Evaluate a smooth-step function; x in [0, 1] -> ret: [0, 1]  (with zero derivatives at x == 0 and x == 1).
 template <typename T> constexpr T smooth_step(T x) {
-  static_assert(std::is_floating_point<T>::value, "");
+  static_assert(std::is_floating_point_v<T>);
   return x * x * (T{3} - T{2} * x);
 }
 
 // Compute fractional part (as in HLSL).
 template <typename T> T frac(T f) {
-  static_assert(std::is_floating_point<T>::value, "");
+  static_assert(std::is_floating_point_v<T>);
   return f - floor(f);
 }
 
 // Evaluate a Gaussian function.
 template <typename T> T gaussian(T x, T sdv = T{1}) {
-  static_assert(std::is_floating_point<T>::value, "");
+  static_assert(std::is_floating_point_v<T>);
   return std::exp(-square(x / sdv) / T{2}) / (sqrt(static_cast<T>(D_TAU)) * sdv);
 }
 
@@ -121,14 +110,18 @@ template <typename T> T my_asin(T a) {
 
 // Like std::sqrt() but prevent NaN's from appearing due to roundoff errors.
 template <typename T> T my_sqrt(T a) {
-  static_assert(std::is_floating_point<T>::value, "");
-  return a < T{0} ? (assertx(a > (sizeof(T) == sizeof(float) ? T{-1e-5f} : T{-1e-10f})), T{0}) : sqrt(a);
+  static_assert(std::is_floating_point_v<T>);
+  if (a < T{0}) {
+    assertx(a > (sizeof(T) == sizeof(float) ? T{-1e-5f} : T{-1e-10f}));
+    return T{0};
+  }
+  return sqrt(a);
 }
 
 // Is the integer i an even power of two?
 inline constexpr bool is_pow2(unsigned i) { return i > 0 && (i & (i - 1)) == 0; }
 
-// Fast version of static_cast<int>(floor(std::log2(x))).
+// Fast version of int(floor(std::log2(x))).
 inline int int_floor_log2(unsigned x) {
   int a = 0;
   while (x >>= 1) a++;

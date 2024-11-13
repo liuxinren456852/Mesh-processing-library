@@ -2,7 +2,8 @@
 #ifndef MESH_PROCESSING_LIBHH_GMESH_H_
 #define MESH_PROCESSING_LIBHH_GMESH_H_
 
-#include <cstring>  // std::memcpy()
+#include <charconv>  // to_chars(), chars_format
+#include <cstring>   // memcpy()
 
 #include "libHh/Mesh.h"
 #include "libHh/Polygon.h"
@@ -17,9 +18,8 @@
   Vertex v3 = mesh.create_vertex();
   mesh.set_point(v3, Point(1.f, 6.f, 7.f));
   Face f1 = mesh.create_face(v1, v2, v3);
-  for (Face f : mesh.ordered_faces()) {
+  for (Face f : mesh.ordered_faces())
     for (Vertex v : mesh.vertices(f)) process(f, mesh.point(v));
-  }
 }
 #endif
 
@@ -37,7 +37,7 @@ struct A3dVertexColor;
 class GMesh : public Mesh {
  public:
   GMesh() = default;
-  GMesh(GMesh&& m) noexcept { swap(*this, m); }  // = default?
+  GMesh(GMesh&& m) noexcept { swap(*this, m); }
   ~GMesh() override = default;
   GMesh& operator=(GMesh&& m) noexcept {
     clear();
@@ -50,8 +50,9 @@ class GMesh : public Mesh {
   void merge(const GMesh& mo, Map<Vertex, Vertex>* mvvn = nullptr);
   void destroy_vertex(Vertex v) override;
   void destroy_face(Face f) override;
-  // do appropriate actions with geometry, eflag_sharp, and face strings
-  void collapse_edge_vertex(Edge e, Vertex vs) override;
+  // Do appropriate actions with geometry, eflag_sharp, and face strings
+  void collapse_edge_vertex(Edge e, Vertex vs) override;  // Vertex vs is kept.
+  void collapse_edge_vertex_saving_attribs(Edge e, Vertex vs);
   void collapse_edge(Edge e) override;
   Vertex split_edge(Edge e, int id = 0) override;
   Edge swap_edge(Edge e) override;
@@ -69,6 +70,7 @@ class GMesh : public Mesh {
   const Point& point(Vertex v) const { return v->_point; }
   void set_point(Vertex v, const Point& p);
   void polygon(Face f, Polygon& poly) const;
+  Vec3<Point> triangle_points(Face f) const;
   float length2(Edge e) const;
   float length(Edge e) const;
   float area(Face f) const;
@@ -124,13 +126,14 @@ class GMesh : public Mesh {
   // ** Misc:
   friend void swap(GMesh& l, GMesh& r) noexcept;
 
+  void show_keys(Vertex v) const;
+
  private:
   std::ostream* _os{nullptr};  // for record_changes
-  mutable Polygon _tmp_poly;
 };
 
-// Format a vector string "(%g ... %g)" with ar.num() == 1..4
-const char* csform_vec(string& str, CArrayView<float> ar);
+// Format a vector string "(%g ... %g)".
+template <int n> const char* csform_vec(string& str, const Vec<float, n>& vec);
 
 // Parse a vector from a {key=value}+ string
 bool parse_key_vec(const char* ss, const char* key, ArrayView<float> ar);
@@ -187,6 +190,49 @@ void for_cstring_key_value(const char* str, Array<char>& key, Array<char>& val, 
     func();
     return false;
   });
+}
+
+//----------------------------------------------------------------------------
+
+template <int n> const char* csform_vec(string& str, const Vec<float, n>& vec) {
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ < 11
+  // https://en.cppreference.com/w/cpp/compiler_support/17
+  // GCC libstdc++ lacks float support for elementary string conversions prior to Version 11.
+  static_assert(n >= 1 && n <= 4);
+  switch (n) {
+    case 1: return csform(str, "(%g)", vec[0]);
+    case 2: return csform(str, "(%g %g)", vec[0], vec[1]);
+    case 3: return csform(str, "(%g %g %g)", vec[0], vec[1], vec[2]);
+    case 4: return csform(str, "(%g %g %g %g)", vec[0], vec[1], vec[2], vec[3]);
+    default: HH_UNREACHABLE;
+  }
+#else  // C++17 std::to_chars().
+  constexpr int size = 100;
+  static_assert(n * 15 < size);
+  if (str.size() < size) str.resize(size);
+  char* s = str.data();
+  char* end = s + size;
+  *s++ = '(';
+  for_int(i, n) {
+    if (i) *s++ = ' ';
+    constexpr int precision = 6;  // Default for printf("%g").
+    s = std::to_chars(s, end, vec[i], std::chars_format::general, precision).ptr;
+    ASSERTXX(s < end - 2);
+  }
+  *s++ = ')';
+  *s++ = char{0};
+  return str.c_str();
+#endif
+}
+
+inline Vec3<Point> GMesh::triangle_points(Face f) const {
+  Vec3<Point> triangle;
+  HEdge he = herep(f), he0 = he;
+  triangle[0] = he->_vert->_point, he = he->_next;
+  triangle[1] = he->_vert->_point, he = he->_next;
+  triangle[2] = he->_vert->_point, he = he->_next;
+  assertx(he == he0);  // is_triangle()
+  return triangle;
 }
 
 //----------------------------------------------------------------------------

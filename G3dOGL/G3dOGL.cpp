@@ -5,11 +5,11 @@
 #define DEF_PLY
 
 #include "G3dOGL/HB.h"
-#include "G3dOGL/SCGeomorph.h"         // DEF_SC
+#include "G3dOGL/ScGeomorph.h"         // DEF_SC
 #include "G3dOGL/SimplicialComplex.h"  // DEF_SC
 #include "G3dOGL/SplitRecord.h"        // DEF_SC
 #include "G3dOGL/normalmapping.h"
-#include "HW.h"
+#include "Hw.h"
 #include "libHh/A3dStream.h"
 #include "libHh/Args.h"
 #include "libHh/Array.h"
@@ -24,32 +24,21 @@
 #include "libHh/PMesh.h"         // DEF_PM
 #include "libHh/Polygon.h"
 #include "libHh/SGrid.h"
-#include "libHh/SRMesh.h"  // DEF_SR
+#include "libHh/SrMesh.h"  // DEF_SR
 #include "libHh/StringOp.h"
 #include "libHh/Timer.h"
 #include "libHh/Video.h"
 
 using namespace hh;
 
+#define ALLOW_LOD  // Comment this out to minimize space usage
+
 namespace hh {
+
 extern bool g_is_ati;  // used in PMesh_ogl.cpp
 bool g_is_ati = false;
+
 }  // namespace hh
-
-extern float ambient;  // used in G3devent.cpp
-float ambient;
-
-#if defined(_WIN32) && !defined(_WIN64)
-// Problem: with __MINGW32__, restarting GL_TRIANGLES seems to require reinitializing some color state.
-//   Same problem with Win32 build.  e.g.:
-// FilterPM ~/git/mesh_processing/demos/data/cessna.pm -nf 3000 -geom_nf 5000 | ~/git/mesh_processing/bin/win32/G3dOGL -st ~/git/mesh_processing/demos/data/cessna.s3d -key ,S
-// ~/git/mesh_processing/bin/win32/G3dOGL ~/git/mesh_processing/demos/data/standingblob.geomorphs -key PDeS -lightambient .5 -thickboundary 1
-constexpr bool force_color_update = true;
-#else
-constexpr bool force_color_update = false;
-#endif
-
-#define ALLOW_LOD  // Comment this out to minimize space usage
 
 namespace g3d {
 
@@ -61,14 +50,25 @@ extern Frame tview;        // to let SR access view matrix
 extern int info;           // for SR diagnostics
 extern string g_filename;  // to override filename for ob1
 extern float lod_level;    // in movie/video
-extern void UpdateOb1Bbox(const Bbox& bbox);
+extern void UpdateOb1Bbox(const Bbox<float, 3>& bbox);
 extern void update_lod();
 extern bool keep_stdin_open;
 extern float override_frametime;
+extern bool lod_mode;
 
 }  // namespace g3d
 
 namespace {
+
+#if defined(_WIN32) && !defined(_WIN64)
+// Problem: with __MINGW32__, restarting GL_TRIANGLES seems to require reinitializing some color state.
+//   Same problem with Win32 build.  e.g.:
+// FilterPM ~/git/mesh_processing/demos/data/cessna.pm -nf 3000 -geom_nf 5000 | ~/git/mesh_processing/bin/win32/G3dOGL -st ~/git/mesh_processing/demos/data/cessna.s3d -key ,S
+// ~/git/mesh_processing/bin/win32/G3dOGL ~/git/mesh_processing/demos/data/standingblob.geomorphs -key PDeS -lightambient .5 -thickboundary 1
+constexpr bool force_color_update = true;
+#else
+constexpr bool force_color_update = false;
+#endif
 
 struct Slider {
   string name;
@@ -84,7 +84,7 @@ constexpr float k_default_hither = .1f;
 constexpr float k_default_yonder = BIGFLOAT;
 constexpr bool lod_use_nvertices = true;  // lod input/output uses #vertices, not slider
 
-struct DerivedHW : HW {
+struct DerivedHw : Hw {
   bool key_press(string s) override;
   void button_press(int butnum, bool pressed, const Vec2<int>& yx) override;
   void wheel_turn(float v) override;
@@ -95,7 +95,7 @@ struct DerivedHW : HW {
   void (*_finpu)(){nullptr};
 };
 
-DerivedHW hw;
+DerivedHw hw;
 
 bool quickmode;  // draw quick segments
 int quicki;      // draw every quicki'th segment
@@ -116,7 +116,7 @@ bool picture;
 bool inpicture;
 unique_ptr<ConsoleProgress> movie_cprogress;
 int movie_nframes;
-string movie_rootname;
+string movie_root_name;
 bool movie_desire_video;
 unique_ptr<Video> movie_video;
 int movie_frame;
@@ -125,6 +125,7 @@ bool outside_frustum;
 float frustum_frac = 1.4f;
 float hither;
 float yonder;
+float ambient;
 float lightsource;
 Vec3<float> backfacec;
 float fdisplacepolygon = 1.f;
@@ -204,8 +205,8 @@ struct VertexLOD {
   Vector Nnor;
   Pixel Od;
   Pixel Nd;
-  UV Ouv;
-  UV Nuv;
+  Uv Ouv;
+  Uv Nuv;
 };
 
 struct CornerLOD {
@@ -241,14 +242,14 @@ const FlagMask vflag_unique_nors = Mesh::allocate_Vertex_flag();  // v_lod.{Onor
 HH_SAC_ALLOCATE_FUNC(Mesh::MCorner, Vector, c_nor);
 
 const FlagMask mflag_uv = Mesh::allocate_flag();
-HH_SAC_ALLOCATE_FUNC(Mesh::MCorner, UV, c_uv);
+HH_SAC_ALLOCATE_FUNC(Mesh::MCorner, Uv, c_uv);
 
 const Pixel k_color_invalid{0xCD, 0xAB, 0xFF, 0x00};
 bool lmcad;    // lmcolor() state
 Pixel curcol;  // current color (for lines and points)
 Color matcol;  // material color (for polygons)
 
-// default color for polygons  (was (.9f, .6f, .4f) before 20020117
+// default color for polygons  (was (.9f, .6f, .4f) before 2002-01-17
 // const A3dVertexColor k_default_color{A3dColor(.8f, .5f, .4f), A3dColor(.5f, .5f, .5f), A3dColor(4.f, 0.f, 0.f)};
 const A3dVertexColor k_default_color{A3dColor(.6f, .6f, .6f), A3dColor(.5f, .5f, .5f), A3dColor(4.f, 0.f, 0.f)};
 
@@ -257,8 +258,8 @@ const A3dVertexColor k_default_poly_color{A3dColor(0.f, 0.f, 0.f), A3dColor(0.f,
 
 // default color for mesh polygons (now defined in meshcold, meshcols, meshcolp, meshca)
 // const A3dVertexColor MESHCOL{A3dColor(.8f, .5f, .4f), A3dColor(.5f, .5f, .5f), A3dColor(4.f, 0.f, 0.f)};
-Color meshcolor;
-Color cuspcolor;
+Color mesh_color;
+Color cusp_color;
 
 struct Node : noncopyable {
   virtual ~Node() = default;
@@ -289,14 +290,14 @@ struct NodePoint : Node {
 };
 
 struct Texture {
-  GLuint texname;
+  GLuint texture_name;
 };
 
 Array<Texture> g_textures;
 
-class GXobject {
+class GxObject {
  public:
-  ~GXobject() { assertx(!_opened); }
+  ~GxObject() { assertx(!_opened); }
   void open(bool todraw) {
     assertx(!_opened);
     _opened = true;
@@ -309,7 +310,7 @@ class GXobject {
     assertx(!_opened);
     return _arn;
   }
-  GMesh* pmesh{nullptr};
+  GMesh* _pmesh{nullptr};
 
  private:
   bool _opened{false};
@@ -318,9 +319,9 @@ class GXobject {
   void append(unique_ptr<Node> n);
 };
 
-class GXobjects {
+class GxObjects {
  public:
-  GXobjects();
+  GxObjects();
   Vec<Frame, k_max_object> t;
   Vec<bool, k_max_object> vis;
   Vec<bool, k_max_object> cullface;      // backface culling (polygon normal)
@@ -343,21 +344,21 @@ class GXobjects {
   }
   void make_link(int oldsegn, int newsegn);
   bool defined(int segn) const { return !!obp(segn); }  // recursion on links not permitted
-  GXobject& operator[](int i) { return *assertx(obp(i)); }
+  GxObject& operator[](int i) { return *assertx(obp(i)); }
 
  private:
   int _imin{k_max_object};
   int _imax{0};
-  // if _link[i], is a link to GXobject _link[i]
+  // if _link[i], is a link to GxObject _link[i]
   Vec<int, k_max_object> _link;
-  Vec<unique_ptr<GXobject>, k_max_object> _ob;
+  Vec<unique_ptr<GxObject>, k_max_object> _ob;
   int _segn{-1};
-  GXobject* obp(int i) const;
+  GxObject* obp(int i) const;
 };
 
-bool GXobject::s_idraw;
+bool GxObject::s_idraw;
 
-GXobjects g_xobs;
+GxObjects g_xobs;
 
 // *** PM stuff (progressive mesh)
 
@@ -408,7 +409,7 @@ void read_sc_gm(const string& filename);
 void sc_gm_wrap_draw(bool show);
 void sc_gm_set_lod(float lod);
 void draw_sc_gm(const SimplicialComplex& kmesh);
-Vec<SCGeomorph, 20> Gmorphs;  // has to be here because of draw_all
+Vec<ScGeomorph, 20> Gmorphs;  // has to be here because of draw_all
 int sc_gm_morph = 0;
 int sc_gm_num = -1;
 bool psc_key_press(char ch);
@@ -436,7 +437,7 @@ void initialize_unlit() {
   assertx(curcol == k_color_invalid);
   matcol.d = k_color_invalid;
   matcol.s = k_color_invalid;
-  matcol.g = -1;
+  matcol.g = -1.f;
 }
 
 void update_cur_color2(const Pixel& col) {
@@ -503,13 +504,13 @@ bool normalmap_init() {
   if (pnormalmap->name() == "dot3") {
     Warning("Resorting to 'dot3' for normal-mapping");
     if (1) {  // make material brighter
-      uint8_t meshca = meshcolor.d[3];
+      uint8_t meshca = mesh_color.d[3];
       A3dColor material;
-      for_int(c, 3) material[c] = meshcolor.d[c] / 255.f;
+      for_int(c, 3) material[c] = mesh_color.d[c] / 255.f;
       float maxv = assertx(max(material));
       material /= maxv;
-      meshcolor.d = pack_color(material);
-      meshcolor.d[3] = meshca;
+      mesh_color.d = pack_color(material);
+      mesh_color.d[3] = meshca;
     }
   }
   if (0) SHOW(pnormalmap->name());
@@ -517,7 +518,7 @@ bool normalmap_init() {
 }
 
 void normalmap_setlight(const Vector& lightdirmodel, const Vector& eyedirmodel, float lambient) {
-  assertx(pnormalmap)->set_parameters(lightdirmodel, eyedirmodel, lambient, lightsource, meshcolor.s);
+  assertx(pnormalmap)->set_parameters(lightdirmodel, eyedirmodel, lambient, lightsource, mesh_color.s);
 }
 
 void normalmap_activate() { assertx(pnormalmap)->activate(); }
@@ -531,25 +532,7 @@ bool bigfont() { return HB::get_font_dims()[1] > 9; }
 void invalidate_dls() { svalid_dl.clear(); }
 
 inline Vector interp_normal(const Vector& n1, const Vector& n2, float f1, float f2) {
-  float n1x = n1[0], n1y = n1[1], n1z = n1[2];
-  float n2x = n2[0], n2y = n2[1], n2z = n2[2];
-  float nx, ny, nz;
-  if (n1x == n2x && n1y == n2y && n1z == n2z) {
-    nx = n1x;
-    ny = n1y;
-    nz = n1z;
-  } else {
-    nx = f1 * n1[0] + f2 * n2[0];
-    ny = f1 * n1[1] + f2 * n2[1];
-    nz = f1 * n1[2] + f2 * n2[2];
-    float denom = sqrt(nx * nx + ny * ny + nz * nz);
-    if (denom) {
-      nx /= denom;
-      ny /= denom;
-      nz /= denom;
-    }
-  }
-  return Vector(nx, ny, nz);
+  return ok_normalized(f1 * n1 + f2 * n2);
 }
 
 inline Pixel interp_color(const Pixel& c1, const Pixel& c2, int f1, int f2) {
@@ -564,7 +547,7 @@ void do_movie(Args& args) {
   if (!g3d::override_frametime) g3d::override_frametime = 1.f / 60.f;  // 60fps
   movie_nframes = args.get_int();
   assertx(movie_nframes >= 2);
-  movie_rootname = args.get_filename();
+  movie_root_name = args.get_filename();
   movie_cprogress = make_unique<ConsoleProgress>();
   movie_desire_video = false;
   if (0) use_dl = false;
@@ -576,7 +559,7 @@ void do_video(Args& args) {
   if (!g3d::override_frametime) g3d::override_frametime = 1.f / 60.f;  // 60fps
   movie_nframes = args.get_int();
   assertx(movie_nframes >= 2);
-  movie_rootname = args.get_filename();
+  movie_root_name = args.get_filename();
   movie_cprogress = make_unique<ConsoleProgress>();
   movie_desire_video = true;
   if (0) use_dl = false;
@@ -587,11 +570,11 @@ void do_texturemap(Args& args) {
   texturemaps.push(filename);
 }
 
-// *** HW callback functions
+// *** Hw callback functions
 
-bool DerivedHW::key_press(string s) { return fkeyp(s); }
+bool DerivedHw::key_press(string s) { return fkeyp(s); }
 
-void DerivedHW::button_press(int butnum, bool pressed, const Vec2<int>& yx) {
+void DerivedHw::button_press(int butnum, bool pressed, const Vec2<int>& yx) {
   Vec2<float> yxf = convert<float>(yx) / convert<float>(win_dims);
   if (pressed) yx_pointer_old = yxf;
   bool shift = get_key_modifier(EModifier::shift);
@@ -611,11 +594,7 @@ void DerivedHW::button_press(int butnum, bool pressed, const Vec2<int>& yx) {
     if (in_slider) {
       use_dl = was_using_dl;
       was_using_dl = false;
-      if (g3d::output) {
-        std::cout << "lod "
-                  << "-1\n";
-        std::cout.flush();
-      }
+      if (g3d::output) std::cout << "lod -1\n" << std::flush;
     } else {
       fbutp(butnum, pressed, shift, yxf);
     }
@@ -627,9 +606,9 @@ void DerivedHW::button_press(int butnum, bool pressed, const Vec2<int>& yx) {
   }
 }
 
-void DerivedHW::wheel_turn(float v) { fwheel(v); }
+void DerivedHw::wheel_turn(float v) { fwheel(v); }
 
-void DerivedHW::draw_window(const Vec2<int>& dims) {
+void DerivedHw::draw_window(const Vec2<int>& dims) {
   is_window = true;
   win_dims = dims;
   fdraw();
@@ -640,6 +619,17 @@ int g_pthick;
 void reset_thickness() { g_pthick = -1; }
 
 void set_thickness2(int vthick) {
+  static bool done = false;
+  static bool line_width_supported = false;
+  if (!done) {
+    done = true;
+    // More recent: GL_ALIASED_LINE_WIDTH_RANGE, GL_SMOOTHED_LINE_WIDTH_RANGE.
+    Vec2<float> min_max;
+    glGetFloatv(GL_LINE_WIDTH_RANGE, min_max.data());
+    if (getenv_bool("OPENGL_DEBUG")) SHOW("line_width_range", min_max);  // Often [0.5, 10]; but [1, 1] on WSL.
+    line_width_supported = min_max[1] > 1.f;
+  }
+  if (vthick != 1 && !line_width_supported) vthick = 1;
   g_pthick = vthick;
   if (vthick > 1) {
     if (antialiasing) glDisable(GL_LINE_SMOOTH);
@@ -702,11 +692,6 @@ Vec2<int> find_max_texture(GLenum internal_format, const Vec2<int>& yx_aspect, i
     static const bool debug = getenv_bool("TEXTURE_MAX_DEBUG");
     if (debug) SHOW("try", level, internal_format, yx, border, w);
     if (!w) break;  // proxy allocation failed
-    if (level >= 16) {
-      // Bug on squeal (Impact).
-      SHOW("level > 16");
-      break;
-    }
     max_yx = (yx * (1 << level)) + 2 * border;
     if (max_mipmap_level == 0) {
       // try the next larger image size at level zero
@@ -715,6 +700,7 @@ Vec2<int> find_max_texture(GLenum internal_format, const Vec2<int>& yx_aspect, i
       // try same image size at next higher mipmap level
       level++;
       if (level + level_offset > max_mipmap_level) break;
+      assertx(level < 16);
     }
   }
   if (product(max_yx)) {
@@ -866,9 +852,10 @@ void display_texture_size_info() {
         glGetTexLevelParameteriv(GL_PROXY_TEXTURE_2D, 0, GL_TEXTURE_BLUE_SIZE, &b);
         glGetTexLevelParameteriv(GL_PROXY_TEXTURE_2D, 0, GL_TEXTURE_ALPHA_SIZE, &a);
         if (1) glGetTexLevelParameteriv(GL_PROXY_TEXTURE_2D, 0, GL_TEXTURE_COMPRESSED, &comp);
-        glGetError();  // ignore any error
-        showf("%-20s %d:%d (%4dx%4d) [%d,%d,%d,%d]%s%s\n", glt_format.name.c_str(), aspyx[1], aspyx[0], max_yx[1],
-              max_yx[0], r, g, b, a, (comp ? " comp" : ""), (mm ? " mipmap" : ""));
+        glGetError();                                       // ignore any error
+        showf("%-20s %d:%d (%4dx%4d) [%d,%d,%d,%d]%s%s\n",  //
+              glt_format.name.c_str(), aspyx[1], aspyx[0], max_yx[1], max_yx[0], r, g, b, a, (comp ? " comp" : ""),
+              (mm ? " mipmap" : ""));
       }
     }
     if (detailed) showf("\n");
@@ -912,7 +899,7 @@ void set_light_ambient(float lambient) {
 void load_texturemaps() {
   static const bool debug = getenv_bool("TEXTURE_DEBUG");
   if (debug) display_texture_size_info();
-  // HH_TIMER(_load_texturemap);
+  // HH_TIMER("_load_texturemap");
   textures_loaded = true;
   if (!texturemaps.num()) {
     string name = g3d::g_filename;
@@ -941,19 +928,18 @@ void load_texturemaps() {
       texture_active = false;
       return;
     }
-    if (contains(s, ".nor")) texturenormal = true;
     texturemaps.push(s);
   }
+  if (any_of(texturemaps, [](const string& name) { return contains(name, ".nor"); })) texturenormal = true;
   assertx(!g_textures.num());
   g_textures.init(texturemaps.num());
   for_int(i, texturemaps.num()) {
     if (debug) SHOW("defining texture", i);
-    glGenTextures(1, &g_textures[i].texname);
-    glBindTexture(GL_TEXTURE_2D, g_textures[i].texname);
-    Image itexture;
+    glGenTextures(1, &g_textures[i].texture_name);
+    glBindTexture(GL_TEXTURE_2D, g_textures[i].texture_name);
     const string filename = texturemaps[i];
-    itexture.read_file(filename);
-    if (1) itexture.reverse_y();  // because glTexImage2D() has image origin at lower-left
+    Image itexture(filename);
+    if (1) itexture.reverse_y();  // because glTexImage2D() has image pixel-grid origin at lower-left
     int orig_xsize = itexture.xsize(), orig_ysize = itexture.ysize();
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     // On ATI, default GL_RGB is in fact GL_RGB5.
@@ -980,9 +966,7 @@ void load_texturemaps() {
       glTexImage2D(GL_TEXTURE_2D, level, internal_format, itexture.xsize(), itexture.ysize(), border, GL_RGBA,
                    GL_UNSIGNED_BYTE, itexture.data());
       USE_GL_EXT_MAYBE(glGenerateMipmap, PFNGLGENERATEMIPMAPPROC);
-      if (glGenerateMipmap && define_mipmap) {
-        glGenerateMipmap(GL_TEXTURE_2D);  // not supported on Remote Desktop
-      }
+      if (glGenerateMipmap && define_mipmap) glGenerateMipmap(GL_TEXTURE_2D);  // not supported on Remote Desktop
     }
     {
       int w, h, r, g, b, a;
@@ -1022,9 +1006,7 @@ void load_texturemaps() {
       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);  // default
       glEnable(GL_ALPHA_TEST);
       glAlphaFunc(GL_GREATER, 0.0);  // discard fragments with zero alpha if partially transparent texture
-      if (getenv_bool("G3D_TEX_CLAMP")) {
-        Warning("G3D_TEX_CLAMP now obsolete; enabled by -texturescale 0");
-      }
+      if (getenv_bool("G3D_TEX_CLAMP")) Warning("G3D_TEX_CLAMP now obsolete; enabled by -texturescale 0");
       if (!texturescale) {
         // showf("Setting texture clamp mode\n");
         unsigned wrap_mode = GL_CLAMP_TO_EDGE;
@@ -1081,9 +1063,9 @@ void load_texturemaps() {
       assertx(max_texture_units >= 2);
       glActiveTexture(GL_TEXTURE1);
       glEnable(GL_TEXTURE_1D);
-      GLuint texname1;
-      glGenTextures(1, &texname1);
-      glBindTexture(GL_TEXTURE_1D, texname1);
+      GLuint texture_name1;
+      glGenTextures(1, &texture_name1);
+      glBindTexture(GL_TEXTURE_1D, texture_name1);
       glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
       GLenum internal_format2 = GL_RGBA8;
       if (0) {
@@ -1119,15 +1101,12 @@ void load_texturemaps() {
         glTexGenfv(GL_S, GL_OBJECT_PLANE, V(0.f, 0.f, 1000.f, 0.f).data());
         glEnable(GL_TEXTURE_GEN_S);
       } else {
-        Image etexture;
-        etexture.read_file("ramp1.png");
+        Image etexture("ramp1.png");
         const int level = 0, border = 0;
         glTexImage1D(GL_TEXTURE_1D, level, internal_format2, etexture.xsize(), border, GL_RGBA, GL_UNSIGNED_BYTE,
                      etexture.data());
         USE_GL_EXT_MAYBE(glGenerateMipmap, PFNGLGENERATEMIPMAPPROC);
-        if (glGenerateMipmap) {
-          glGenerateMipmap(GL_TEXTURE_1D);  // not supported on Remote Desktop
-        }
+        if (glGenerateMipmap) glGenerateMipmap(GL_TEXTURE_1D);  // not supported on Remote Desktop
         // To map it to elevation (in meters) use
         //   z = 10 x - 7995
         // where z is the elevation and x is the horizontal index of the
@@ -1136,8 +1115,8 @@ void load_texturemaps() {
         // Horizontal spacing is 10m -> 16385 samples span 163'840m
         //  x = 799.5 + z * 0.10
         //  x' in [0, 1]:  x' = x / 1600  [shift by 0.5?]
-        //  z' in world_units:  z' = z / 163840
-        //  1600 * x' = 799.5 + z' * 163840 * 0.10
+        //  z' in world_units:  z' = z / 163'840
+        //  1600 * x' = 799.5 + z' * 163'840 * 0.10
         //  x' = 0.5 + z' * 10.24
         glTexGeni(GL_S, GL_TEXTURE_GEN_MODE, GL_OBJECT_LINEAR);
         glTexGenfv(GL_S, GL_OBJECT_PLANE, V(0.f, 0.f, 10.24f, 0.5f).data());
@@ -1188,7 +1167,7 @@ void gl_init() {
     curcol = k_color_invalid;
     matcol.d = k_color_invalid;
     matcol.s = k_color_invalid;
-    matcol.g = -1;  // phong == -1 is different
+    matcol.g = -1.f;  // phong == -1 is different
   }
   {  // lighting
     if (1) {
@@ -1354,15 +1333,13 @@ bool setup_ob(int i) {
   int texture_id = i - 1;
   if (texture_active && texture_id >= 0 && (texture_id < g_textures.num() || all_textured)) {
     if (texture_id >= g_textures.num()) texture_id = g_textures.num() - 1;
-    glBindTexture(GL_TEXTURE_2D, g_textures[texture_id].texname);
+    glBindTexture(GL_TEXTURE_2D, g_textures[texture_id].texture_name);
     glEnable(GL_TEXTURE_2D);
     glEnable(GL_TEXTURE_GEN_S);
     glEnable(GL_TEXTURE_GEN_T);
     if (texturenormal) {
-      Vector lightdirmodel = k_lightdir_eye0 * ~fmodeltoeye;
-      assertw(lightdirmodel.normalize());
-      Vector eyedirmodel = Vector(-1.f, 0.f, 0.f) * ~fmodeltoeye;
-      assertw(eyedirmodel.normalize());
+      Vector lightdirmodel = ok_normalized(k_lightdir_eye0 * ~fmodeltoeye);
+      Vector eyedirmodel = ok_normalized(Vector(-1.f, 0.f, 0.f) * ~fmodeltoeye);
       normalmap_setlight(lightdirmodel, eyedirmodel, lambient);
     }
   }
@@ -1376,7 +1353,7 @@ void draw_list(CArrayView<unique_ptr<Node>> arn) {
   const int buffer_ntriangles = g_is_ati ? std::numeric_limits<int>::max() : 32;
   const int buffer_nedges = g_is_ati ? std::numeric_limits<int>::max() : 128;
   const int buffer_npoints = g_is_ati ? std::numeric_limits<int>::max() : 128;
-  for_int(i, arn.num()) {  // note: index i is also incremented within loop
+  for (int i = 0; i < arn.num(); i++) {  // Note: index i is also incremented within loop.
     if (ii) {
       if (!--ii)
         ii = quicki;
@@ -1503,44 +1480,33 @@ Map<const GMesh*, Array<Face>> map_mfa;
 
 void mesh_init(GMesh& mesh) {
   static Set<const GMesh*> have_vnors, have_fnors;
-  Set<Vertex> vredo;
-  Set<Face> fredo;
   Polygon poly;
-  bool meshmodified = !mesh.gflags().flag(g3d::mflag_ok).set(true);
-  if (meshmodified) {
+  bool mesh_modified = !mesh.gflags().flag(g3d::mflag_ok).set(true);
+  if (mesh_modified) {
     // Could free up mesh strings after use; useful?
     // For future: mesh.gflags().flag(mflag_f_colors) = false;
-    // Clear the NON-current mode
-    if (!lsmooth) have_vnors.remove(&mesh);
-    if (lsmooth) have_fnors.remove(&mesh);
-    map_mfa.remove(&mesh);  // remove may return empty array
+    have_vnors.remove(&mesh);
+    have_fnors.remove(&mesh);
+    map_mfa.remove(&mesh);  // Remove may return empty array.
     for (Vertex v : mesh.vertices()) {
-      if (mesh.flags(v).flag(g3d::vflag_ok).set(true)) continue;
-      vredo.add(v);
-      for (Vertex w : mesh.vertices(v)) vredo.add(w);
-      for (Face f : mesh.faces(v)) fredo.add(f);
-    }
-    for (Vertex v : vredo) {
       VertexLOD& vlod = v_lod(v);
-      if (parse_key_vec(mesh.get_string(v), "Opos", vlod.Opos)) {
-        vlod.Npos = mesh.point(v);
-      }
+      if (g3d::lod_mode && parse_key_vec(mesh.get_string(v), "Opos", vlod.Opos)) vlod.Npos = mesh.point(v);
       A3dColor co;
       if (parse_key_vec(mesh.get_string(v), "rgb", co)) {
         mesh.gflags().flag(mflag_v_colors) = true;
         mesh.flags(v).flag(vflag_color) = true;
         v_color(v) = pack_color(co);
-        vlod.Nd = v_color(v);
-        if (parse_key_vec(mesh.get_string(v), "Orgb", co)) {
-          vlod.Od = pack_color(co);
-        } else {
-          vlod.Od = pack_color(A3dColor(1.f, 1.f, 0.f));  // yellow
+        if (g3d::lod_mode) {
+          vlod.Nd = v_color(v);
+          if (parse_key_vec(mesh.get_string(v), "Orgb", co)) {
+            vlod.Od = pack_color(co);
+          } else {
+            vlod.Od = pack_color(A3dColor(1.f, 1.f, 0.f));  // yellow
+          }
         }
       }
-      bool has_c_color = false;
-      for (Corner c : mesh.corners(v)) {
-        if (GMesh::string_has_key(mesh.get_string(c), "rgb")) has_c_color = true;
-      }
+      const bool has_c_color =
+          any_of(mesh.corners(v), [&](Corner c) { return GMesh::string_has_key(mesh.get_string(c), "rgb"); });
       if (has_c_color) {
         if (mesh.flags(v).flag(vflag_color).set(false)) Warning("Found both vertex and corner rgb");
         mesh.gflags().flag(mflag_c_colors) = true;
@@ -1551,39 +1517,37 @@ void mesh_init(GMesh& mesh) {
             co = A3dColor(0.f, 0.f, 0.f);
           }
           c_color(c) = pack_color(co);
-          c_lod(c).Nd = c_color(c);
-          if (parse_key_vec(mesh.get_string(c), "Orgb", co)) {
-            c_lod(c).Od = pack_color(co);
-          } else {
-            c_lod(c).Od = pack_color(A3dColor(1.f, .8f, .5f));  // orange
+          if (g3d::lod_mode) {
+            c_lod(c).Nd = c_color(c);
+            if (parse_key_vec(mesh.get_string(c), "Orgb", co)) {
+              c_lod(c).Od = pack_color(co);
+            } else {
+              c_lod(c).Od = pack_color(A3dColor(1.f, .8f, .5f));  // Orange.
+            }
           }
         }
       }
       if (1) {
-        UV vuv(BIGFLOAT, BIGFLOAT);
+        Uv vuv(BIGFLOAT, BIGFLOAT);
         if (parse_key_vec(mesh.get_string(v), "uv", vuv)) {
-          // is now stored in vuv
           mesh.gflags().flag(mflag_uv) = true;
+          if (g3d::lod_mode && parse_key_vec(mesh.get_string(v), "Ouv", v_lod(v).Ouv))
+            assertx(parse_key_vec(mesh.get_string(v), "uv", v_lod(v).Nuv));
         }
         for (Corner c : mesh.corners(v)) {
-          UV& uv = c_uv(c);
-          if (parse_key_vec(mesh.get_string(c), "uv", uv)) {
-            // is now stored in uv
+          Uv& uv = c_uv(c);
+          if (parse_key_vec(mesh.get_string(c), "uv", uv))
             mesh.gflags().flag(mflag_uv) = true;
-          } else {
+          else
             uv = vuv;
-          }
         }
       }
     }
     for (Face f : mesh.faces()) {
-      if (!mesh.flags(f).flag(g3d::fflag_ok).set(true)) fredo.add(f);
-    }
-    for (Face f : fredo) {
-      if (!mesh.is_triangle(f)) {
-        mesh.polygon(f, poly);
-        if (!poly.is_convex() && !num_concave++) Warning("Have concave polygons in mesh");
-      }
+      // if (!mesh.is_triangle(f)) {
+      //   mesh.polygon(f, poly);
+      //   if (!poly.is_convex() && !num_concave++) Warning("Have concave polygons in mesh");
+      // }
       A3dColor co;
       if (parse_key_vec(mesh.get_string(f), "rgb", co)) {
         mesh.gflags().flag(mflag_f_colors) = true;
@@ -1592,20 +1556,16 @@ void mesh_init(GMesh& mesh) {
       }
     }
   }
-  if (lsmooth) {
-    if (have_vnors.add(&mesh))
-      for (Vertex v : mesh.vertices()) vredo.add(v);
-    for (Vertex v : vredo) {
-      Vnors vnors;
-      vnors.compute(mesh, v);
+  if (lsmooth && have_vnors.add(&mesh)) {
+    for (Vertex v : mesh.vertices()) {
+      Vnors vnors(mesh, v);
       bool uniquenors = true;
       int num = 0;
       Vector gOnor, gNnor;
       dummy_init(gOnor, gNnor);
       for (Corner c : mesh.corners(v)) {
         c_nor(c) = vnors.get_nor(mesh.corner_face(c));
-        Vector onor;
-        if (mesh.parse_corner_key_vec(c, "Onormal", onor)) {
+        if (Vector onor; g3d::lod_mode && mesh.parse_corner_key_vec(c, "Onormal", onor)) {
           CornerLOD& clod = c_lod(c);
           clod.Nnor = c_nor(c);
           clod.Onor = onor;
@@ -1626,40 +1586,26 @@ void mesh_init(GMesh& mesh) {
       // HH_SSTAT(Suniquenors, uniquenors);
       if (uniquenors) {
         mesh.flags(v).flag(vflag_unique_nors) = true;
-        VertexLOD& vlod = v_lod(v);
-        vlod.Onor = gOnor;
-        vlod.Nnor = gNnor;
+        if (g3d::lod_mode) {
+          VertexLOD& vlod = v_lod(v);
+          vlod.Onor = gOnor;
+          vlod.Nnor = gNnor;
+        }
       }
     }
   }
-  if (1) {
-    for (Vertex v : vredo) {
-      if (parse_key_vec(mesh.get_string(v), "Ouv", v_lod(v).Ouv)) {
-        assertx(parse_key_vec(mesh.get_string(v), "uv", v_lod(v).Nuv));
-        assertx(mesh.gflags().flag(mflag_uv));
-      }
-    }
-  }
-  if (!lsmooth || ((ledges || strip_lines) && cullbackedges && lcullface)) {
-    if (have_fnors.add(&mesh))
-      for (Face f : mesh.faces()) fredo.add(f);
-    for (Face f : fredo) {
-      mesh.flags(f).flag(g3d::fflag_ok) = true;
+  if ((!lsmooth || ((ledges || strip_lines) && cullbackedges && lcullface)) && have_fnors.add(&mesh)) {
+    for (Face f : mesh.faces()) {
       mesh.polygon(f, poly);
       f_pnor(f) = poly.get_normal();
     }
   }
-  if (0 && strip_lines && !map_mfa.contains(&mesh)) {
-    Array<Face> fa;
-    for (Face f : mesh.ordered_faces()) fa.push(f);
-    map_mfa.enter(&mesh, std::move(fa));
-  }
+  if (0 && strip_lines && !map_mfa.contains(&mesh)) map_mfa.enter(&mesh, Array<Face>(mesh.ordered_faces()));
   if (strip_lines) {
     bool is_new;
     Array<Face>& fa = map_mfa.enter(&mesh, Array<Face>(), is_new);
-    if (is_new) {
+    if (is_new)
       for (Face f : mesh.ordered_faces()) fa.push(f);
-    }
   }
 }
 
@@ -1677,7 +1623,7 @@ inline void setup_face(const GMesh& mesh, Face f) {
       maybe_update_mat_diffuse(f_color(f));
     } else if (mesh.gflags().flag(mflag_f_colors)) {
       Warning("face without color");
-      maybe_update_mat_diffuse(meshcolor.d);
+      maybe_update_mat_diffuse(mesh_color.d);
     }
   }
 }
@@ -1686,7 +1632,7 @@ inline void render_corner(const GMesh& mesh, Corner c) {
   Vertex v = mesh.corner_vertex(c);
   if (texture_active) {
     if (mesh.gflags().flag(mflag_uv)) {
-      UV uv = c_uv(c);
+      Uv uv = c_uv(c);
       if (uv[0] != BIGFLOAT) {
         glTexCoord2fv(uv.data());
       } else {
@@ -1704,7 +1650,7 @@ inline void render_corner(const GMesh& mesh, Corner c) {
       maybe_update_mat_diffuse(v_color(v));
     } else if (!mesh.flags(mesh.corner_face(c)).flag(fflag_color)) {
       // this may be optional.
-      maybe_update_mat_diffuse(meshcolor.d);
+      maybe_update_mat_diffuse(mesh_color.d);
     }
     if (lsmooth) glNormal3fv(c_nor(c).data());
   }
@@ -1740,6 +1686,46 @@ inline bool edge_continuous(const GMesh& mesh, Edge e) {
   return true;
 }
 
+// https://linux.die.net/man/3/glusphere
+// https://github.com/funchal/libglu/blob/debian-unstable/src/libutil/quad.c
+void render_sphere(const Point& center, float radius, int slices, int stacks) {
+  const int nlon = slices, nlat = stacks;
+  assertx(nlon >= 3 && nlat >= 2);
+  Array<Vector> normals1(nlon), normals2(nlon);
+  Array<Point> points1(nlon), points2(nlon);
+  fill(normals1, Vector(0.f, 0.f, 1.f));
+  fill(points1, center + Vector(0.f, 0.f, radius));
+  glBegin(GL_TRIANGLES);
+  for_intL(i, 1, nlat + 1) {
+    const float angle1 = float(i) / nlat * (TAU / 2);
+    const float c1 = cos(angle1), s1 = sin(angle1);
+    for_int(j, nlon) {
+      const float angle2 = float(j) / nlon * TAU;
+      normals2[j] = Vector(cos(angle2) * s1, sin(angle2) * s1, c1);
+      points2[j] = center + radius * normals2[j];
+    }
+    for_int(j, nlon) {
+      // First triangle of quad.
+      glNormal3fv(normals1[j].data());
+      glVertex3fv(points1[j].data());
+      glNormal3fv(normals2[j].data());
+      glVertex3fv(points2[j].data());
+      glNormal3fv(normals2[(j + 1) % nlon].data());
+      glVertex3fv(points2[(j + 1) % nlon].data());
+      // Second triangle of quad.
+      glNormal3fv(normals1[j].data());
+      glVertex3fv(points1[j].data());
+      glNormal3fv(normals2[(j + 1) % nlon].data());
+      glVertex3fv(points2[(j + 1) % nlon].data());
+      glNormal3fv(normals1[(j + 1) % nlon].data());
+      glVertex3fv(points1[(j + 1) % nlon].data());
+    }
+    normals1 = normals2;
+    points1 = points2;
+  }
+  glEnd();
+}
+
 void draw_mesh(GMesh& mesh) {
   mesh_init(mesh);
   const int buffer_ntriangles = g_is_ati ? std::numeric_limits<int>::max() : 32;
@@ -1756,7 +1742,7 @@ void draw_mesh(GMesh& mesh) {
     glShadeModel(smooth_shade_model ? GL_SMOOTH : GL_FLAT);
     bool cannot_strip = !lsmooth && smooth_shade_model;
     initialize_lit();
-    update_mat_color(meshcolor);
+    update_mat_color(mesh_color);
     if (texture_active) {
       if (mesh.gflags().flag(mflag_uv)) {
         glDisable(GL_TEXTURE_GEN_S);
@@ -1765,7 +1751,7 @@ void draw_mesh(GMesh& mesh) {
       if (!texture_lit) {
         glShadeModel(GL_FLAT);
         initialize_unlit();
-        update_cur_color(meshcolor.d);
+        update_cur_color(mesh_color.d);
         set_light_ambient(0.f);
         if (texturenormal) normalmap_activate();
       }
@@ -1845,17 +1831,15 @@ void draw_mesh(GMesh& mesh) {
       if (nquads) glEnd();      // GL_QUADS
     } else if (defining_dl && !lquickmode && !cannot_strip) {
       // Invest time to form triangle strips.
-      HH_STATNP(Sstriplen);
+      HH_STAT_NP(Sstriplen);
       if (getenv_bool("STRIPS_DEBUG")) Sstriplen.set_print(true);
       // toggle visited flag (to avoid a pass to clear all the flags)
       static const FlagMask mflag_fvisited = Mesh::allocate_flag();
       static const FlagMask fflag_visited = Mesh::allocate_Face_flag();
       bool vis_new_state = !mesh.gflags().flag(mflag_fvisited);
       mesh.gflags().flag(mflag_fvisited) = vis_new_state;
-      if (k_debug) {
+      if (k_debug)
         for (Face f : mesh.faces()) assertx(mesh.flags(f).flag(fflag_visited) != vis_new_state);
-      }
-      Array<Vertex> va;
       for (Face f : mesh.faces()) {
         if (mesh.flags(f).flag(fflag_visited) == vis_new_state) continue;
         mesh.flags(f).flag(fflag_visited) = vis_new_state;
@@ -1869,7 +1853,7 @@ void draw_mesh(GMesh& mesh) {
         glBegin(GL_TRIANGLE_STRIP);
         int striplen = 1;
         int vi = 0;
-        mesh.get_vertices(f, va);
+        Vec3<Vertex> va = mesh.triangle_vertices(f);
         for_int(i, 3) {
           Face fn = mesh.opp_face(va[i], f);
           if (!fn || !mesh.is_triangle(fn) || mesh.flags(fn).flag(fflag_visited) == vis_new_state ||
@@ -1895,9 +1879,8 @@ void draw_mesh(GMesh& mesh) {
           mesh.flags(ff).flag(fflag_visited) = vis_new_state;
           striplen++;
           Vertex vwaspiv = va[mod3(vi + pivot)];
-          mesh.get_vertices(ff, va);
-          vi = va.index(vwaspiv);
-          ASSERTX(vi >= 0);
+          va = mesh.triangle_vertices(ff);
+          vi = index(va, vwaspiv);
           if (texture_active && !texture_lit) {
           } else {
             if (!lsmooth) glNormal3fv(f_pnor(ff).data());
@@ -1927,7 +1910,7 @@ void draw_mesh(GMesh& mesh) {
             ntriangles = 0;
           }
           if (!ntriangles) {
-            if (0) update_mat_color(meshcolor);  // would obviate force_color_update just for this case
+            if (0) update_mat_color(mesh_color);  // would obviate force_color_update just for this case
             glBegin(GL_TRIANGLES);
           }
           ntriangles++;
@@ -1966,7 +1949,7 @@ void draw_mesh(GMesh& mesh) {
         Vector vtoe = p - feyetomodel.p();
         bool cull = true;
         for (Face f : mesh.faces(e)) {
-          if (dot(vtoe, f_pnor(f)) < 0) {
+          if (dot(vtoe, f_pnor(f)) < 0.f) {
             cull = false;
             break;
           }
@@ -1997,8 +1980,8 @@ void draw_mesh(GMesh& mesh) {
       if (!nedges) glBegin(GL_LINES);
       nedges++;
       if (uvtopos && mesh.gflags().flag(mflag_uv)) {
-        UV uv11 = c_uv(mesh.corner(mesh.vertex1(e), mesh.face1(e)));
-        UV uv21 = c_uv(mesh.corner(mesh.vertex2(e), mesh.face1(e)));
+        Uv uv11 = c_uv(mesh.corner(mesh.vertex1(e), mesh.face1(e)));
+        Uv uv21 = c_uv(mesh.corner(mesh.vertex2(e), mesh.face1(e)));
         if (1) {
           Point p11(uv11[0], uv11[1], 0.f);
           Point p21(uv21[0], uv21[1], 0.f);
@@ -2006,8 +1989,8 @@ void draw_mesh(GMesh& mesh) {
           glVertex3fv(p21.data());
         }
         if (mesh.face2(e)) {
-          UV uv12 = c_uv(mesh.corner(mesh.vertex1(e), mesh.face2(e)));
-          UV uv22 = c_uv(mesh.corner(mesh.vertex2(e), mesh.face2(e)));
+          Uv uv12 = c_uv(mesh.corner(mesh.vertex1(e), mesh.face2(e)));
+          Uv uv22 = c_uv(mesh.corner(mesh.vertex2(e), mesh.face2(e)));
           if (uv11 != uv12) {
             Point p12(uv12[0], uv12[1], 0.f);
             Point p22(uv22[0], uv22[1], 0.f);
@@ -2027,28 +2010,17 @@ void draw_mesh(GMesh& mesh) {
       bool is_new;
       float& mesh_radius = mesh_radii.enter(&mesh, 0.f, is_new);
       if (is_new) {
-        Bbox bbox;
-        for (Vertex v : mesh.vertices()) bbox.union_with(mesh.point(v));
+        const Bbox bbox{transform(mesh.vertices(), [&](Vertex v) { return mesh.point(v); })};
         mesh_radius = bbox.max_side();
         assertw(mesh_radius > 0.f);
       }
       glShadeModel(GL_SMOOTH);
       initialize_lit();
-      update_mat_color(cuspcolor);
-#if !defined(HH_NO_GLU)
-      unique_ptr<GLUquadricObj, decltype(&gluDeleteQuadric)> quadric{gluNewQuadric(), gluDeleteQuadric};
+      update_mat_color(cusp_color);
       for (Vertex v : mesh.vertices()) {
         if (!mesh.flags(v).flag(GMesh::vflag_cusp)) continue;
-        glPushMatrix();
-        {
-          const Point& p = mesh.point(v);
-          glTranslatef(p[0], p[1], p[2]);
-          const int nslices = 8, nstacks = 8;
-          gluSphere(quadric.get(), sphereradius * mesh_radius, nslices, nstacks);
-        }
-        glPopMatrix();
+        render_sphere(mesh.point(v), sphereradius * mesh_radius, 8, 8);
       }
-#endif
     }
     set_thickness(thicka3d);
   }
@@ -2058,15 +2030,13 @@ void draw_mesh(GMesh& mesh) {
     initialize_unlit();
     update_cur_color(pix_sharpedgecolor);
     set_thickness(thicksharp);
-    Array<Vertex> va;
-    Point p;
     Point pp;
     Face fp = nullptr;
     bool stripstarted = false;
-    const Array<Face>& fa = map_mfa.get(&mesh);
+    CArrayView<Face> fa = map_mfa.get(&mesh);
     for (Face f : fa) {
-      mesh.get_vertices(f, va);
-      p = interp(mesh.point(va[0]), mesh.point(va[1]), mesh.point(va[2]));
+      const Vec3<Point>& triangle = mesh.triangle_points(f);
+      Point p = interp(triangle);
       if (1) p = interp(feyetomodel.p(), p, edgeoffset);
       int afound = 0;
       if (1) {
@@ -2088,9 +2058,9 @@ void draw_mesh(GMesh& mesh) {
       }
       if (strip_always_connect && fp && !afound) afound = 2;
       if (afound && cullbackedges && lcullface) {
-        if (dot(p - feyetomodel.p(), f_pnor(f)) > 0)
+        if (dot(p - feyetomodel.p(), f_pnor(f)) > 0.f)
           afound = 0;
-        else if (dot(pp - feyetomodel.p(), f_pnor(fp)) > 0)
+        else if (dot(pp - feyetomodel.p(), f_pnor(fp)) > 0.f)
           afound = 0;
       }
       if (afound) {
@@ -2129,7 +2099,7 @@ void draw_all() {
     is_init = true;
     for (int i = g_xobs.min_segn(); i <= g_xobs.max_segn(); i++) {
       if (!setup_ob(i)) continue;
-      if (g_xobs[i].pmesh) mesh_init(*g_xobs[i].pmesh);
+      if (g_xobs[i]._pmesh) mesh_init(*g_xobs[i]._pmesh);
     }
   }
   static const bool no_dl = getenv_bool("G3D_NO_DL");
@@ -2138,7 +2108,7 @@ void draw_all() {
     if (!g_xobs.defined(i) || !g_xobs.vis[i]) continue;
     if (!setup_ob(i)) continue;
     //
-    // DL Tests 20020528: frames / sec (before use_dl -> after use_dl)
+    // DL Tests 2002-05-28: frames / sec (before use_dl -> after use_dl)
     //  dragonf 200k faces: (-geom 500x500)
     //   .m polygons        3.3 -> 5.8
     //   .m ntriangles=inf  3.7 -> 20.3 ** and long dl compile!
@@ -2152,7 +2122,7 @@ void draw_all() {
     //   .tmpm textured     6.4 -> 53.3
     //
     // If the mesh has been modified since cached, turn off all caching.
-    if (use_dl && svalid_dl.contains(i) && g_xobs[i].pmesh && !g_xobs[i].pmesh->gflags().flag(g3d::mflag_ok)) {
+    if (use_dl && svalid_dl.contains(i) && g_xobs[i]._pmesh && !g_xobs[i]._pmesh->gflags().flag(g3d::mflag_ok)) {
       svalid_dl.remove(i);
       static const bool g3d_force_dl1 = getenv_bool("G3D_FORCE_DL1");
       if (!g3d_force_dl1) use_dl = false;
@@ -2195,16 +2165,16 @@ void draw_all() {
       draw_ply();
 #endif
     } else {
-      if (g_xobs[i].pmesh) draw_mesh(*g_xobs[i].pmesh);
+      if (g_xobs[i]._pmesh) draw_mesh(*g_xobs[i]._pmesh);
       draw_list(g_xobs[i].traverse());
     }
-    if (g_xobs[i].pmesh) g_xobs[i].pmesh->gflags().flag(g3d::mflag_ok) = true;  // if sc_mode, psc_mode, etc.
+    if (g_xobs[i]._pmesh) g_xobs[i]._pmesh->gflags().flag(g3d::mflag_ok) = true;  // if sc_mode, psc_mode, etc.
     //
     if (defining_dl) {
       defining_dl = false;
       static const bool debug_dl = getenv_bool("DL_DEBUG");
       if (debug_dl) {
-        HH_TIMER(_dl_create);
+        HH_TIMER("_dl_create");
         glEndList();
       } else {
         glEndList();
@@ -2249,8 +2219,7 @@ void wrap_draw(bool show) {
   };
   if (!show) {
     if (button_active) {
-      Vec2<float> yxf;
-      assertx(HB::get_pointer(yxf));
+      const Vec2<float> yxf = HB::get_pointer().value();
       float dval = std::exp((yxf[0] - yx_pointer_old[0]) * -1.5f * g3d::fchange);
       int i = int(yx_pointer_old[1] * sliders.num() * .9999f);
       *sliders[i].val *= dval;
@@ -2275,13 +2244,12 @@ void process_print() {
   // drawmode(); NORMALDRAW is fine
   glPushAttrib(GL_PIXEL_MODE_BIT);
   {                            // save GL_READ_BUFFER
-    if (0) {                   // 20160907 disabled because we do want most-recent rendering which is in backbuffer
+    if (0)                     // 2016-09-07 disabled because we do want most-recent rendering which is in backbuffer
       glReadBuffer(GL_FRONT);  // default is GL_BACK if doublebuffered
-    }
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     // glPixelStorei(GL_PACK_ROW_LENGTH, nxpix*3);
     if (nxpix < 44) {
-      // Generally slow for RemoteDesktop, but must use this to counter OpenGL bug if nxpix<44.
+      // Generally slow for RemoteDesktop, but must use this to counter OpenGL bug if nxpix < 44.
       for_int(y, nypix) glReadPixels(0, y, nxpix, 1, GL_RGBA, GL_UNSIGNED_BYTE, image[y].data());
     } else {
       glReadPixels(0, 0, nxpix, nypix, GL_RGBA, GL_UNSIGNED_BYTE, image.data());
@@ -2293,14 +2261,14 @@ void process_print() {
     if (!movie_video) {
       assertx(!movie_frame);
       movie_video = make_unique<Video>(concat(V(movie_nframes), image.dims()));
-      movie_video->attrib().suffix = "mp4";                                           // useful default
-      movie_video->attrib().framerate = 60;                                           // useful default
-      movie_video->attrib().bitrate = max(1000000, int(product(image.dims()) * 10));  // ~20Mbps at FullHD
+      movie_video->attrib().suffix = "mp4";                                             // useful default
+      movie_video->attrib().framerate = 60;                                             // useful default
+      movie_video->attrib().bitrate = max(1'000'000, int(product(image.dims()) * 10));  // ~20Mbps at FullHD
     }
     (*movie_video)[movie_frame].assign(image);
   } else {
     string name = imagefilename;
-    if (movie_nframes) name = sform("%s.%03d.bmp", movie_rootname.c_str(), movie_frame);
+    if (movie_nframes) name = sform("%s.%03d.bmp", movie_root_name.c_str(), movie_frame);
     if (name[0] == '|') image.set_suffix("bmp");
     if (!movie_nframes) SHOW(name);
     if (movie_nframes) image.set_silent_io_progress(true);
@@ -2311,9 +2279,8 @@ void process_print() {
 
 void toggle_attribute(Vec<bool, k_max_object>& attrib) {
   bool allvis = true;
-  for (int i = g_xobs.min_segn(); i <= g_xobs.max_segn(); i++) {
+  for (int i = g_xobs.min_segn(); i <= g_xobs.max_segn(); i++)
     if (g_xobs.defined(i) && !g_xobs.vis[i]) allvis = false;
-  }
   for_int(i, k_max_object) {
     if (!allvis && (!g_xobs.defined(i) || !g_xobs.vis[i])) continue;
     bool& val = attrib[i];
@@ -2353,7 +2320,7 @@ void all_reset() {
   }
 }
 
-// *** GXobject
+// *** GxObject
 
 Color create_mat_color(const A3dVertexColor& vc) {
   Color col;
@@ -2369,7 +2336,7 @@ bool operator==(const A3dVertexColor& c1, const A3dVertexColor& c2) {
 
 bool operator!=(const A3dVertexColor& c1, const A3dVertexColor& c2) { return !(c1 == c2); }
 
-void GXobject::add(const A3dElem& el) {
+void GxObject::add(const A3dElem& el) {
   assertx(_opened);
   assertx(el.num());
   switch (el.type()) {
@@ -2426,11 +2393,11 @@ void GXobject::add(const A3dElem& el) {
       append(std::move(n));
       break;
     }
-    default: assertnever(string() + "unknown type '" + narrow_cast<char>(el.type()) + "'");
+    default: assertnever(string("unknown type '") + narrow_cast<char>(el.type()) + "'");
   }
 }
 
-void GXobject::append(unique_ptr<Node> n) {
+void GxObject::append(unique_ptr<Node> n) {
   _arn.push(std::move(n));
   if (s_idraw) {
     assertx(is_window);
@@ -2438,7 +2405,7 @@ void GXobject::append(unique_ptr<Node> n) {
   }
 }
 
-void GXobject::close() {
+void GxObject::close() {
   assertx(_opened);
   _opened = false;
   if (s_idraw) {
@@ -2447,9 +2414,9 @@ void GXobject::close() {
   }
 }
 
-void GXobject::morph(float finterp) {  // finterp == 1.f is new,   finterp == 0.f is old
+void GxObject::morph(float finterp) {  // finterp == 1.f is new,   finterp == 0.f is old
   use_dl = false;
-  GMesh& mesh = *pmesh;
+  GMesh& mesh = *_pmesh;
   mesh_init(mesh);
   bool has_v_color = mesh.gflags().flag(mflag_v_colors);
   bool has_c_color = mesh.gflags().flag(mflag_c_colors);
@@ -2484,7 +2451,7 @@ void GXobject::morph(float finterp) {  // finterp == 1.f is new,   finterp == 0.
       }
     }
     if (texture_active) {
-      UV uv;
+      Uv uv;
       uv[0] = f1 * vlod.Nuv[0] + f2 * vlod.Ouv[0];
       uv[1] = f1 * vlod.Nuv[1] + f2 * vlod.Ouv[1];
       for (Corner c : mesh.corners(v)) c_uv(c) = uv;
@@ -2499,40 +2466,20 @@ void GXobject::morph(float finterp) {  // finterp == 1.f is new,   finterp == 0.
       }
     } else {
       Warning("GL_NORMALIZE");
-      glEnable(GL_NORMALIZE);  // not reset anywhere I hope.
+      glEnable(GL_NORMALIZE);  // Hopefully not reset anywhere.
       ogl_normalize = true;
       for (Face f : mesh.faces()) {
-        Corner c1;
-        dummy_init(c1);
-        for (Corner c : mesh.corners(f)) {
-          c1 = c;
-          if (1) break;
-        }
-        Corner c2 = mesh.ccw_face_corner(c1);
-        Corner c3 = mesh.ccw_face_corner(c2);
-        if (!assertw(mesh.ccw_face_corner(c3) == c1)) continue;
-        const Point& p1 = mesh.point(mesh.corner_vertex(c1));
-        const Point& p2 = mesh.point(mesh.corner_vertex(c2));
-        const Point& p3 = mesh.point(mesh.corner_vertex(c3));
-        Vector& v = f_pnor(f);
-        // from cross()
-        float p1x = p1[0], p1y = p1[1], p1z = p1[2];
-        float v1x = p2[0] - p1x, v1y = p2[1] - p1y, v1z = p2[2] - p1z;
-        float v2x = p3[0] - p1x, v2y = p3[1] - p1y, v2z = p3[2] - p1z;
-        float vx = v1y * v2z - v1z * v2y;
-        float vy = v1z * v2x - v1x * v2z;
-        float vz = v1x * v2y - v1y * v2x;
-        v[0] = vx;
-        v[1] = vy;
-        v[2] = vz;
+        if (!assertw(mesh.is_triangle(f))) continue;
+        const Vec3<Point> triangle = mesh.triangle_points(f);
+        f_pnor(f) = get_normal_dir(triangle);
       }
     }
   }
 }
 
-// *** GXobjects
+// *** GxObjects
 
-GXobjects::GXobjects() {
+GxObjects::GxObjects() {
   for_int(i, k_max_object) {
     _link[i] = 0;
     t[i] = Frame::identity();
@@ -2545,24 +2492,24 @@ GXobjects::GXobjects() {
   }
 }
 
-void GXobjects::clear(int segn) {
+void GxObjects::clear(int segn) {
   assertx(_segn == -1);
   assertx(_link.ok(segn));
   _link[segn] = 0;
   _ob[segn] = nullptr;
   svalid_dl.remove(segn);
-  // I could update _imin, _imax here
+  // We could update _imin, _imax here.
 }
 
-void GXobjects::open(int segn) {
+void GxObjects::open(int segn) {
   assertx(_segn == -1);
   _segn = segn;
   assertx(_link.ok(segn));
   _link[_segn] = 0;
-  if (!_ob[_segn]) {  // create GXobject
+  if (!_ob[_segn]) {  // create GxObject
     _imin = min(_imin, _segn);
     _imax = max(_imax, _segn);
-    _ob[_segn] = make_unique<GXobject>();
+    _ob[_segn] = make_unique<GxObject>();
   }
   if (is_window) {
     hw.begin_draw_visible();
@@ -2572,7 +2519,7 @@ void GXobjects::open(int segn) {
   _ob[_segn]->open(is_window);
 }
 
-void GXobjects::make_link(int oldsegn, int newsegn) {
+void GxObjects::make_link(int oldsegn, int newsegn) {
   assertx(_segn == -1);
   assertx(_link.ok(oldsegn));
   assertx(_link.ok(newsegn));
@@ -2583,7 +2530,7 @@ void GXobjects::make_link(int oldsegn, int newsegn) {
   _imax = max(_imax, newsegn);
 }
 
-GXobject* GXobjects::obp(int i) const {
+GxObject* GxObjects::obp(int i) const {
   assertx(_link.ok(i));
   if (_ob[i]) return _ob[i].get();
   if (_link[i]) return _ob[_link[i]].get();
@@ -2611,17 +2558,17 @@ bool HB::init(Array<string>& aargs, bool (*pfkeyp)(const string& s),
   yonder = k_default_yonder;
   // had ambient=.25 lightsource=.75 on SGI
   // had ambient=.60 lightsource=.75 on PC
-  // changed to high-contrast default on 20020117
-  //  (I liked the contrast of the old normal-map images.)
-  // ambient = .25f; lightsource = .85f;  // before 20120502
+  // changed to high-contrast default on 2002-01-17
+  //  (The contrast of the old normal-map images was nice.)
+  // ambient = .25f; lightsource = .85f;  // before 2012-05-02
   ambient = .30f;      // was .60f
   lightsource = .65f;  // was .75f then .72f
   backfacec = {.15f, .5f, .15f};
   dbuffer = true;
   Vec3<float> spherecolor = {.2f, 1.f, .2f};  // was {1.f, .2f, .2f}
-  Vec3<float> meshcold = {.6f, .6f, .6f};     // was {.8f, .5f, .4f} before 20120502
+  Vec3<float> meshcold = {.6f, .6f, .6f};     // was {.8f, .5f, .4f} before 2012-05-02
   Vec3<float> meshcols = {.5f, .5f, .5f};
-  Vec3<float> meshcolp = {4.f, 0.f, 0.f};  // 4 to match normal-map; was 5 before 20020117
+  Vec3<float> meshcolp = {4.f, 0.f, 0.f};  // 4 to match normal-map; was 5 before 2002-01-17
   Vec1<float> meshcola = {1.f};
   string pm_filename;
   string sc_filename;
@@ -2643,7 +2590,7 @@ bool HB::init(Array<string>& aargs, bool (*pfkeyp)(const string& s),
   args.p("-imagen[ame]", imagefilename, "image_filename : set 'DP' name");
   HH_ARGSP(dbuffer, "val : set double buffering");
   HH_ARGSF(picture, ": output picture and end");
-  HH_ARGSD(movie, "nframes rootname : create movie as set of rootname.%03d.bmp files");
+  HH_ARGSD(movie, "nframes root_name : create movie as set of root_name.%03d.bmp files");
   HH_ARGSD(video, "nframes name.mp4 : create movie (360 frames for one 'J' rotation)");
   args.p("-thickb[oundary]", thickboundary, "i : width of bnd edges");
   args.p("-thicks[harp]", thicksharp, "i : width of sharp edges");
@@ -2683,16 +2630,13 @@ bool HB::init(Array<string>& aargs, bool (*pfkeyp)(const string& s),
   pix_edgecolor = parse_color(edgecolor);
   pix_sharpedgecolor = parse_color(sharpedgecolor);
   pix_bndedgecolor = parse_color(bndedgecolor);
-  bool cuspbright = spherecolor[0] + spherecolor[1] + spherecolor[2] > 2.f;
-  cuspcolor = create_mat_color(A3dVertexColor(A3dColor(spherecolor[0], spherecolor[1], spherecolor[2]),
-                                              A3dColor(spherecolor[0], spherecolor[1], spherecolor[2]),
-                                              A3dColor((cuspbright ? 1.f : 7.f), 0.f, 0.f)));
-  meshcolor = create_mat_color(A3dVertexColor(A3dColor(meshcold[0], meshcold[1], meshcold[2]),
-                                              A3dColor(meshcols[0], meshcols[1], meshcols[2]),
-                                              A3dColor(meshcolp[0], meshcolp[1], meshcolp[2])));
+  const bool cusp_bright = sum(spherecolor) > 2.f;
+  cusp_color = create_mat_color(
+      A3dVertexColor(A3dColor(spherecolor), A3dColor(spherecolor), A3dColor((cusp_bright ? 1.f : 7.f), 0.f, 0.f)));
+  mesh_color = create_mat_color(A3dVertexColor(A3dColor(meshcold), A3dColor(meshcols), A3dColor(meshcolp)));
   int mesha = int(meshcola[0] * 255.f + .5f);
   assertx(mesha >= 0 && mesha <= 255);
-  meshcolor.d[3] = uint8_t(mesha);
+  mesh_color.d[3] = uint8_t(mesha);
   if (picture) nice_rendering = true;
   if (pm_filename != "") {
 #if defined(DEF_PM)
@@ -2774,12 +2718,12 @@ void HB::redraw_now() { hw.redraw_now(); }
 
 Vec2<int> HB::get_extents() { return win_dims; }
 
-bool HB::get_pointer(Vec2<float>& yxf) {
-  Vec2<int> yx;
-  if (!hw.get_pointer(yx)) return false;
-  yxf = convert<float>(yx) / convert<float>(win_dims);
-  if (0) SHOW(yxf);
-  return true;
+std::optional<Vec2<float>> HB::get_pointer() {
+  if (auto pointer = hw.get_pointer()) {
+    const Vec2<int> yx = *pointer;
+    return {convert<float>(yx) / convert<float>(win_dims)};
+  }
+  return {};
 }
 
 void HB::set_camera(const Frame& p_real_t, float p_real_zoom, const Frame& p_view_t, float p_view_zoom) {
@@ -2840,18 +2784,18 @@ void HB::draw_space() {
   if (movie_nframes) {
     g3d::lod_level = float(movie_frame) / (movie_nframes - 1.f);
     if (1) {
-      // disabled 20110114 for terrain which became blank since no LOD
-      // re-enabled 20120306 to create movie from LOD slider; added check "if (!lod_mode)" in G3ddraw.cpp
+      // disabled 2011-01-14 for terrain which became blank since no LOD
+      // re-enabled 2012-03-06 to create movie from LOD slider; added check "if (!lod_mode)" in G3ddraw.cpp
       g3d::update_lod();
     }
     // HB::segment_morph_mesh(1, g3d::lod_level);
   }
 #if defined(DEF_SR)
-  // I checked: I believe there are no graphics calls before this since the last swapbuffer.
+  // We assume that there are no graphics calls before this since the last swapbuffer.
   if (sr_mode) sr_pre_space();
 #endif
-  // I noticed a 12% slowdown with gcanyon_4k2k_fly2.frames when I
-  //  placed the ClearWindow() before SRMesh::adapt_refinement() !
+  // There is a 12% slowdown with gcanyon_4k2k_fly2.frames when placing the ClearWindow()
+  //  before SrMesh::adapt_refinement() !
   hw.clear_window();  // computation done before this!
   wrap_draw(false);
   if (picture && !g3d::input) {
@@ -2899,7 +2843,7 @@ void HB::draw_space() {
         movie_cprogress = nullptr;
         inpicture = false;
         if (movie_video) {
-          movie_video->write_file(movie_rootname);
+          movie_video->write_file(movie_root_name);
           movie_video = nullptr;
         }
         HB::quit();
@@ -3084,23 +3028,22 @@ depthc<u>e  <a>ntialiasing  <n>ice_rendering  <p>erspective  <S>liders
 
 string HB::show_info() {
   int obn = cob;
-  return sform("[GL %c%c%c%c%c%c%c%c%c%c%c%c%c]", g_xobs.cullface[obn] ? 'b' : ' ',
-               g_xobs.reverse_cull[obn] ? 'r' : ' ', g_xobs.shading[obn] ? 's' : ' ', g_xobs.smooth[obn] ? 'm' : ' ',
-               g_xobs.edges[obn] ? 'e' : ' ', mdepthcue ? 'u' : ' ', antialiasing ? 'a' : ' ',
-               nice_rendering ? 'n' : ' ', perspec ? 'p' : ' ', slidermode ? 'S' : ' ', texture_active ? 't' : ' ',
-               use_dl ? 'C' : ' ',
+  return sform("[GL %c%c%c%c%c%c%c%c%c%c%c%c%c]",  //
+               g_xobs.cullface[obn] ? 'b' : ' ', g_xobs.reverse_cull[obn] ? 'r' : ' ', g_xobs.shading[obn] ? 's' : ' ',
+               g_xobs.smooth[obn] ? 'm' : ' ', g_xobs.edges[obn] ? 'e' : ' ', mdepthcue ? 'u' : ' ',
+               antialiasing ? 'a' : ' ', nice_rendering ? 'n' : ' ', perspec ? 'p' : ' ', slidermode ? 'S' : ' ',
+               texture_active ? 't' : ' ', use_dl ? 'C' : ' ',
                quickmode  ? 'q'
                : butquick ? 'Q'
                           : ' ');
 }
 
-bool HB::world_to_vdc(const Point& pi, float& xo, float& yo, float& zo) {
-  Point p = pi * tcami;
-  zo = p[0];
-  if (p[0] < hither) return false;
-  xo = .5f - p[1] / p[0] * tzp[1];
-  yo = .5f - p[2] / p[0] * tzp[0];
-  return true;
+HB::VdcResult HB::vdc_from_world(const Point& pi) {
+  HB::VdcResult result;
+  const Point p = pi * tcami;
+  result.zs = p[0];
+  if (p[0] >= hither) result.xys = V(.5f - p[1] / p[0] * tzp[1], .5f - p[2] / p[0] * tzp[0]);
+  return result;
 }
 
 void HB::draw_segment(const Vec2<float>& yx1, const Vec2<float>& yx2) {
@@ -3132,7 +3075,7 @@ void HB::close_segment() { g_xobs.close(); }
 
 void HB::segment_attach_mesh(int segn, GMesh* pmesh) {
   if (!assertw(g_xobs.defined(segn))) return;
-  g_xobs[segn].pmesh = pmesh;
+  g_xobs[segn]._pmesh = pmesh;
 }
 
 void HB::make_segment_link(int oldsegn, int newsegn) { g_xobs.make_link(oldsegn, newsegn); }
@@ -3147,7 +3090,7 @@ void HB::segment_morph_mesh(int segn, float finterp) {
 }
 
 void HB::reload_textures() {
-  for_int(i, g_textures.num()) glDeleteTextures(1, &g_textures[i].texname);
+  for_int(i, g_textures.num()) glDeleteTextures(1, &g_textures[i].texture_name);
   g_textures.clear();
   textures_loaded = false;
 }
@@ -3161,15 +3104,10 @@ int HB::id() { return 2000; }
 void* HB::escape(void* code, void* data) {
   int icode = narrow_cast<int>(reinterpret_cast<intptr_t>(code));
   float fdata = *static_cast<float*>(data);
-  dummy_use(fdata);
   switch (icode) {
     case 1: {
       if (fdata < 0.f) {
-        if (g3d::output) {
-          std::cout << "lod "
-                    << "-1\n";
-          std::cout.flush();
-        }
+        if (g3d::output) std::cout << "lod -1\n" << std::flush;
         if (!use_dl) use_dl = was_using_dl;
       } else {
         if (use_dl) {
@@ -3210,7 +3148,7 @@ unique_ptr<PMeshIter> pmi;
 float pm_lod_level = getenv_float("PM_LOD_LEVEL", 0.f);
 
 void read_pm(const string& filename) {
-  // HH_TIMER(_read_pm);
+  // HH_TIMER("_read_pm");
   // RFile fi(filename);
   if (filename == "-") g3d::keep_stdin_open = true;
   g_fi = make_unique<RFile>(filename);
@@ -3218,7 +3156,8 @@ void read_pm(const string& filename) {
   pmi = make_unique<PMeshIter>(*pmrs);
   if (0 && pm_lod_level == 0.f) pm_lod_level = 1.f;
   pmi->goto_nvertices(pmrs->base_mesh()._vertices.num() + int(pmrs->_info._tot_nvsplits * pm_lod_level + .5f));
-  slidermode = true;
+  slidermode = pmrs->_info._tot_nvsplits > 0;
+  showf("G3d: (1) File:%s v=%d f=%d\n", filename.c_str(), pmrs->_info._full_nvertices, pmrs->_info._full_nfaces);
   g3d::UpdateOb1Bbox(pmrs->_info._full_bbox);
   if (g3d::g_filename == "") g3d::g_filename = filename;
 }
@@ -3232,8 +3171,7 @@ void pm_update_lod() {
   invalidate_dls();
   if (g3d::output) {
     float val = lod_use_nvertices ? pmi->_vertices.num() : pm_lod_level;
-    std::cout << "lod " << val << '\n';
-    std::cout.flush();
+    std::cout << "lod " << val << '\n' << std::flush;
   }
 }
 
@@ -3241,8 +3179,7 @@ void pm_wrap_draw(bool show) {
   if (!slidermode) return;
   if (!show) {
     if (button_active && yx_pointer_old[1] < k_one_slider_left_thresh) {
-      Vec2<float> yxf;
-      assertx(HB::get_pointer(yxf));
+      const Vec2<float> yxf = HB::get_pointer().value();
       float oldval = pm_lod_level;
       switch (button_active) {
         case 1: {
@@ -3325,18 +3262,18 @@ void draw_pm() {
     if (!pmesh._info._has_rgb) assertw(lsmooth);
     glShadeModel(lsmooth || pmesh._info._has_rgb ? GL_SMOOTH : GL_FLAT);
     initialize_lit();
-    update_mat_color(meshcolor);
+    update_mat_color(mesh_color);
     if (texture_active) {
       if (!texture_lit) {
         glShadeModel(GL_FLAT);
         initialize_unlit();
-        update_cur_color(meshcolor.d);
+        update_cur_color(mesh_color.d);
         set_light_ambient(0.f);
         if (texturenormal) normalmap_activate();
       }
     }
     // static const int pm_strips = getenv_int("PM_STRIPS");
-    // 20020528: it now always seems faster with strips and it greatly helps when Display Lists are enabled.
+    // 2002-05-28: it now always seems faster with strips and it greatly helps when Display Lists are enabled.
     static const bool pm_strips = !getenv_bool("PM_NOSTRIPS");
     if (!pm_strips || pmesh._info._has_rgb) {
       if (0) Warning("PMesh: no strips for rendering (may be slower)");
@@ -3354,7 +3291,7 @@ void draw_pm() {
     set_light_ambient(ambient);
     if (texturenormal) normalmap_deactivate();
   }
-  if (ledges && !texture_active) {
+  if (ledges) {
     // Options cullbackedges, lquickmode not handled.
     glShadeModel(GL_FLAT);
     initialize_unlit();
@@ -3370,21 +3307,13 @@ bool pm_key_press(char ch) {
     case 'c':
       pm_lod_level = 0.f;
       pm_update_lod();
-      if (g3d::output) {
-        std::cout << "lod "
-                  << "-1\n";
-        std::cout.flush();
-      }
+      if (g3d::output) std::cout << "lod -1\n" << std::flush;
       hw.redraw_now();
       break;
     case 'a':
       pm_lod_level = 1.f;
       pm_update_lod();
-      if (g3d::output) {
-        std::cout << "lod "
-                  << "-1\n";
-        std::cout.flush();
-      }
+      if (g3d::output) std::cout << "lod -1\n" << std::flush;
       hw.redraw_now();
       break;
     default: return false;
@@ -3398,7 +3327,7 @@ bool pm_key_press(char ch) {
 
 #if defined(DEF_SR)
 
-SRMesh srmesh;
+SrMesh srmesh;
 int sr_ntstrips;
 int sr_ncachemiss;
 bool sr_freeze;
@@ -3411,9 +3340,9 @@ float sr_radar_old_hither;
 bool sr_morph_active;
 
 void read_sr(const string& filename) {
-  HH_TIMER(_read_sr);
+  HH_TIMER("_read_sr");
   RFile fi(filename);
-  for (string sline; fi().peek() == '#';) assertx(my_getline(fi(), sline));
+  for (string line; fi().peek() == '#';) assertx(my_getline(fi(), line));
   assertx(fi().peek() == 'P' || fi().peek() == 'S');
   bool srm_input = fi().peek() == 'S';
   if (!srm_input) {
@@ -3441,17 +3370,16 @@ void sr_regulator() {
   }
   float pixtol = sr_screen_thresh * min(win_dims) * .5f;
   static int count;
-  if (++count > 50) {  // ignore the transient behavior in the first 50 frames
+  if (++count > 50)  // Ignore the transient behavior in the first 50 frames.
     HH_SSTAT(Stau, pixtol);
-  }
 }
 
 void sr_adapt_refinement() {
-  // HH_ATIMER(_sr_adapt_refinement);
   // Timer timer;
+  // timer.start();
   // Note: called before setup_ob(), so we must form the parameters we need here ourselves!
   {
-    SRViewParams vp;
+    SrViewParams vp;
     vp.set_frame(tpos * inverse(g_xobs.t[1]));
     if (!product(win_dims)) {  // window is iconified on _WIN32
       vp.set_zooms(twice(1.f));
@@ -3491,8 +3419,9 @@ void sr_pre_space() {
     } else {
       // We have a previous frame.
       std::ostream& os = (*sr_stats_file)();
-      os << sform("%6.4f %6.4f %6d %7.5f %4.2f\n", sr_refinement_time, g3d::fchange, srmesh.num_active_faces(),
-                  sr_screen_thresh, float(sr_ncachemiss) / srmesh.num_active_faces());
+      os << sform("%6.4f %6.4f %6d %7.5f %4.2f\n",  //
+                  sr_refinement_time, g3d::fchange, srmesh.num_active_faces(), sr_screen_thresh,
+                  float(sr_ncachemiss) / srmesh.num_active_faces());
     }
   }
   {
@@ -3507,8 +3436,7 @@ void sr_pre_space() {
     static int frame;
     if (g3d_dump_frame && frame++ == g3d_dump_frame) {
       SHOW("dumping v.m and my_sleep(10.)");
-      GMesh gmesh;
-      srmesh.extract_gmesh(gmesh);
+      GMesh gmesh = srmesh.extract_gmesh();
       WFile fi("v.m");
       gmesh.write(fi());
       my_sleep(10.);
@@ -3531,18 +3459,18 @@ void draw_sr() {
     assertw(lsmooth);
     glShadeModel(lsmooth ? GL_SMOOTH : GL_FLAT);
     initialize_lit();
-    update_mat_color(meshcolor);
+    update_mat_color(mesh_color);
     if (texture_active) {
       if (!texture_lit) {
         glShadeModel(GL_FLAT);
         initialize_unlit();  // disable lighting
-        update_cur_color(meshcolor.d);
+        update_cur_color(mesh_color.d);
         set_light_ambient(0.f);
         if (texturenormal) normalmap_activate();
       }
     }
     if (sr_no_strips) {
-      Warning("SRMesh: not using strips for rendering");
+      Warning("SrMesh: not using strips for rendering");
       srmesh.ogl_render_faces_individually(texture_active && !texture_lit);
     } else if (!sr_use_tvc) {
       srmesh.ogl_render_faces_strips(texture_active && !texture_lit);
@@ -3616,13 +3544,14 @@ void sr_wrap_draw(bool show) {
     bool morph = sr_morph_active;
     string s1 = sform("faces=%-5d", nf);
     string s2 = !bigfont() || !morph ? sform(" pixtol=%4.2f", pixtol) : sform(" pix=%4.2f", pixtol);
-    string s3 = (!morph       ? ""
-                 : !bigfont() ? sform(" morph%02d vgr=%04.1f%% vgc=%04.1f%%", sr_gtime,
-                                      srmesh.num_vertices_refine_morphing() * 100.f / srmesh.num_active_vertices(),
-                                      srmesh.num_vertices_coarsen_morphing() * 100.f / srmesh.num_active_vertices())
-                              : sform("vgr=%04.1f%% vgc=%04.1f%%",
-                                      srmesh.num_vertices_refine_morphing() * 100.f / srmesh.num_active_vertices(),
-                                      srmesh.num_vertices_coarsen_morphing() * 100.f / srmesh.num_active_vertices()));
+    string s3 =
+        (!morph       ? ""
+         : !bigfont() ? sform(" morph%02d vgr=%04.1f%% vgc=%04.1f%%",  //
+                              sr_gtime, srmesh.num_vertices_refine_morphing() * 100.f / srmesh.num_active_vertices(),
+                              srmesh.num_vertices_coarsen_morphing() * 100.f / srmesh.num_active_vertices())
+                      : sform("vgr=%04.1f%% vgc=%04.1f%%",  //
+                              srmesh.num_vertices_refine_morphing() * 100.f / srmesh.num_active_vertices(),
+                              srmesh.num_vertices_coarsen_morphing() * 100.f / srmesh.num_active_vertices()));
     string s4 = (sr_ntstrips     ? sform(" f/strip=%4.1f", float(nf) / sr_ntstrips)
                  : sr_ncachemiss ? sform(" v/t=%4.2f", float(sr_ncachemiss) / srmesh.num_active_faces())
                                  : "");
@@ -3647,8 +3576,7 @@ void sr_wrap_draw(bool show) {
     if (outside_frustum) sliders.push(Slider{"frustum_frac", &frustum_frac});
     if (!show) {
       if (button_active) {
-        Vec2<float> yxf;
-        assertx(HB::get_pointer(yxf));
+        const Vec2<float> yxf = HB::get_pointer().value();
         float dval = std::exp((yxf[0] - yx_pointer_old[0]) * -1.5f * g3d::fchange);
         int i = int(yx_pointer_old[1] * sliders.num() * .9999f);
         *sliders[i].val *= dval;
@@ -3670,8 +3598,7 @@ void sr_wrap_draw(bool show) {
     static float old_screen_thresh;
     if (sr_screen_thresh != old_screen_thresh) {
       old_screen_thresh = sr_screen_thresh;
-      std::cout << "screen_thresh " << sr_screen_thresh << '\n';
-      std::cout.flush();
+      std::cout << "screen_thresh " << sr_screen_thresh << '\n' << std::flush;
     }
   }
 }
@@ -3720,12 +3647,9 @@ bool sr_key_press(char ch) {
       static bool striplines_old_textureactive;
       sr_striplines = !sr_striplines;
       if (sr_striplines) {
-        striplines_old_edges = g_xobs.edges[1];
-        striplines_old_shading = g_xobs.shading[1];
-        striplines_old_textureactive = texture_active;
-        g_xobs.edges[1] = true;
-        g_xobs.shading[1] = false;
-        texture_active = false;
+        striplines_old_edges = std::exchange(g_xobs.edges[1], true);
+        striplines_old_shading = std::exchange(g_xobs.shading[1], false);
+        striplines_old_textureactive = std::exchange(texture_active, false);
       } else {
         g_xobs.edges[1] = striplines_old_edges;
         g_xobs.shading[1] = striplines_old_shading;
@@ -3765,24 +3689,20 @@ bool sr_key_press(char ch) {
       //
       sr_radar = !sr_radar;
       if (sr_radar) {
-        radar_old_tview = g3d::tview;
-        radar_old_edges = g_xobs.edges[1];
+        radar_old_tview = std::exchange(g3d::tview, sr_tview);
+        radar_old_edges = std::exchange(g_xobs.edges[1], true);
         sr_radar_old_hither = hither;
-        radar_old_textureactive = texture_active;
-        radar_old_outside_frustum = outside_frustum;
-        g3d::tview = sr_tview;
-        g_xobs.edges[1] = true;
+        radar_old_textureactive = std::exchange(texture_active, false);
+        radar_old_outside_frustum = std::exchange(outside_frustum, false);
         // hither = sr_hither_radar;
-        texture_active = false;
         if (g_xobs.min_segn() == 0 && g_xobs.defined(0)) g_xobs.vis[0] = true;
-        outside_frustum = false;
       } else {
         g3d::tview = radar_old_tview;
         g_xobs.edges[1] = radar_old_edges;
         hither = sr_radar_old_hither;
         texture_active = radar_old_textureactive;
-        if (g_xobs.min_segn() == 0 && g_xobs.defined(0)) g_xobs.vis[0] = false;
         outside_frustum = radar_old_outside_frustum;
+        if (g_xobs.min_segn() == 0 && g_xobs.defined(0)) g_xobs.vis[0] = false;
       }
       hw.redraw_now();
       break;
@@ -3860,12 +3780,7 @@ void vertSmoothNormal(Simplex vs, Simplex corner_fct, Vector& avg_norm) {
   Vec3<Simplex> verts;
   int ngroup = s_norgroup[corner_fct->getVAttribute()];
   corner_fct->vertices(verts.data());
-  // find order of vs in verts
-  int i_vs = -1;
-  for_int(i, 3) {
-    if (vs == verts[i]) i_vs = i;
-  }
-  assertx(i_vs >= 0);
+  const int i_vs = index(verts, vs);
   avg_norm = fct_pnor[corner_fct->getId()];
   // go around in one direction averaging normals
   // of adjacent facets with same normal group
@@ -3878,13 +3793,12 @@ void vertSmoothNormal(Simplex vs, Simplex corner_fct, Vector& avg_norm) {
   bool done = false;
   while (e->isManifold()) {
     // find other facet around e
-    ForSCSimplexParent(e, f) {
+    for (Simplex f : e->getParents()) {
       if (f != fct) {
         fct = f;
         break;
       }
     }
-    EndFor;
     // if the new fct is the corner_fct made a full circle
     // nothing left to do
     if (fct == corner_fct) {
@@ -3895,12 +3809,7 @@ void vertSmoothNormal(Simplex vs, Simplex corner_fct, Vector& avg_norm) {
     if (s_norgroup[fct->getVAttribute()] != ngroup) break;
     Vec3<Simplex> verts2;
     fct->vertices(verts2.data());
-    // find va among verts2
-    int i_va = -1;
-    for_int(i, 3) {
-      if (va == verts2[i]) i_va = i;
-    }
-    assertx(i_va >= 0);
+    const int i_va = index(verts2, va);
     if (verts2[mod3(i_va + 1)] == vb) {
       // va still before vb
       // inconsistent with previous fct
@@ -3927,25 +3836,19 @@ void vertSmoothNormal(Simplex vs, Simplex corner_fct, Vector& avg_norm) {
     fct = corner_fct;
     while (e->isManifold()) {
       // find other facet around e
-      ForSCSimplexParent(e, f) {
+      for (Simplex f : e->getParents()) {
         if (f != fct) {
           fct = f;
           break;
         }
       }
-      EndFor;
       // cannot make a full circle this way
       assertx(fct != corner_fct);
       // if new facet does not have same smoothing group
       if (s_norgroup[fct->getVAttribute()] != ngroup) break;
       // Vec3<Simplex> verts;
       fct->vertices(verts.data());
-      // find va among verts
-      int i_va = -1;
-      for_int(i, 3) {
-        if (va == verts[i]) i_va = i;
-      }
-      assertx(i_va >= 0);
+      const int i_va = index(verts, va);
       if (verts[mod3(i_va + 1)] == vb) {
         // va still before vb
         // inconsistent with previous fct
@@ -3966,7 +3869,7 @@ void vertSmoothNormal(Simplex vs, Simplex corner_fct, Vector& avg_norm) {
 }
 
 void read_sc(const string& filename) {
-  HH_TIMER(__read_sc);
+  HH_TIMER("__read_sc");
   RFile fin(filename);
   Kmesh.read(fin());
   fct_pnor.init(Kmesh.getMaxId(2));
@@ -3979,30 +3882,24 @@ void read_sc(const string& filename) {
   for_int(attrid, Kmesh.materialNum()) {
     const char* s = Kmesh.getMaterial(attrid);
     A3dColor co;
-    s_color[attrid] = parse_key_vec(s, "rgb", co) ? pack_color(co) : meshcolor.d;
+    s_color[attrid] = parse_key_vec(s, "rgb", co) ? pack_color(co) : mesh_color.d;
     s_norgroup[attrid] = to_int(assertx(GMesh::string_key(str, s, "norgroup")));
   }
-  ForSCSimplex(Kmesh, 2, s2) {
+  for (Simplex s2 : Kmesh.simplices_dim(2)) {
     Vec3<Simplex> v;
     s2->vertices(v.data());
     fct_pnor[s2->getId()] = ok_normalized(cross(v[0]->getPosition(), v[1]->getPosition(), v[2]->getPosition()));
   }
-  EndFor;
-  ForSCSimplex(Kmesh, 2, s2) {
+  for (Simplex s2 : Kmesh.simplices_dim(2)) {
     Vec3<Simplex> verts;
     s2->vertices(verts.data());
     for_int(i, 3) vertSmoothNormal(verts[i], s2, corner_pnor[3 * s2->getId() + i]);
   }
-  EndFor;
   // initialize principal verts and edges set
-  ForSCSimplex(Kmesh, 0, v) {
+  for (Simplex v : Kmesh.simplices_dim(0))
     if (v->isPrincipal()) psc_principal_verts.enter(v);
-  }
-  EndFor;
-  ForSCSimplex(Kmesh, 1, e) {
+  for (Simplex e : Kmesh.simplices_dim(1))
     if (e->isPrincipal()) psc_principal_edges.enter(e);
-  }
-  EndFor;
   toggle_attribute(g_xobs.cullface);
   // no bbox information yet.
   // g3d::UpdateOb1Bbox(...);
@@ -4011,21 +3908,20 @@ void read_sc(const string& filename) {
 }
 
 void read_psc(const string& filename) {
-  HH_TIMER(__read_psc);
+  HH_TIMER("__read_psc");
   RFile fin(filename);
   // read in base point
   Kmesh.read(fin());
   assertx(Kmesh.num(0) == 1 && Kmesh.num(1) == 0 && Kmesh.num(2) == 0);
   // initialize principal verts and edges set
-  ForSCSimplex(Kmesh, 0, v) { psc_principal_verts.enter(v); }
-  EndFor;
+  for (Simplex v : Kmesh.simplices_dim(0)) psc_principal_verts.enter(v);
   s_color.init(Kmesh.materialNum());
   s_norgroup.init(Kmesh.materialNum());
   string str;
   for_int(attrid, Kmesh.materialNum()) {
     const char* s = Kmesh.getMaterial(attrid);
     A3dColor co;
-    s_color[attrid] = parse_key_vec(s, "rgb", co) ? pack_color(co) : meshcolor.d;
+    s_color[attrid] = parse_key_vec(s, "rgb", co) ? pack_color(co) : mesh_color.d;
     s_norgroup[attrid] = to_int(assertx(GMesh::string_key(str, s, "norgroup")));
   }
   int last = psc_lod_list.add(1);
@@ -4049,14 +3945,14 @@ void read_psc(const string& filename) {
   if (hpix) {
     for_int(times, 10) {
       {
-        HH_ATIMER(vsplit);
+        HH_ATIMER("vsplit");
         for_int(i, psc_lod_list.num() - 1) {
           SplitRecord& vsplit = psc_lod_list[i];
           vsplit.applySplit(Kmesh);
         }
       }
       {
-        HH_ATIMER(vunify);
+        HH_ATIMER("vunify");
         for (int i = psc_lod_list.num() - 2; i >= 0; --i) {
           SplitRecord& vsplit = psc_lod_list[i];
           vsplit.applyUnify(Kmesh);
@@ -4088,20 +3984,14 @@ void psc_update_lod() {
       if (vs->isPrincipal()) {
         psc_principal_verts.remove(vs);
       } else {
-        ForSCSimplexParent(vs, e) {
-          if (!e->isPrincipal()) continue;
-          psc_principal_edges.remove(e);
-        }
-        EndFor;
+        for (Simplex e : vs->getParents())
+          if (e->isPrincipal()) psc_principal_edges.remove(e);
       }
       if (vt->isPrincipal()) {
         psc_principal_verts.remove(vt);
       } else {
-        ForSCSimplexParent(vt, e) {
-          if (!e->isPrincipal()) continue;
-          psc_principal_edges.remove(e);
-        }
-        EndFor;
+        for (Simplex e : vt->getParents())
+          if (e->isPrincipal()) psc_principal_edges.remove(e);
       }
       // do unify
       vsplit.applyUnify(Kmesh);
@@ -4109,11 +3999,8 @@ void psc_update_lod() {
       if (vs->isPrincipal()) {
         psc_principal_verts.enter(vs);
       } else {
-        ForSCSimplexParent(vs, e) {
-          if (!e->isPrincipal()) continue;
-          psc_principal_edges.enter(e);
-        }
-        EndFor;
+        for (Simplex e : vs->getParents())
+          if (e->isPrincipal()) psc_principal_edges.enter(e);
       }
       if (psc_unify_normal_list[i]) {
         // if normals cached use them
@@ -4128,18 +4015,17 @@ void psc_update_lod() {
       } else {
         // otherwise, compute and cache
         int cnt = 0;
-        ForSCVertexFace(vs, f) {
+        for (Simplex f : vs->faces_of_vertex()) {
           dummy_use(f);
           cnt++;
         }
-        EndFor;
         Array<NormalRecord>& anr = *new Array<NormalRecord>;
         psc_unify_normal_list[i] = &anr;
         anr.reserve(cnt);
         Vec3<Simplex> verts;
         NormalRecord nr;
         // calculate facet normals
-        ForSCVertexFace(vs, s2) {
+        for (Simplex s2 : vs->faces_of_vertex()) {
           assertx(s2->getDim() == 2);
           nr.fid = s2->getId();
           s2->vertices(verts.data());
@@ -4148,12 +4034,11 @@ void psc_update_lod() {
           fct_pnor[nr.fid] = nr.fct_nor;
           anr.push(nr);
         }
-        EndFor;
-        // note: to be completely correct we should also recalculate corners just oustide
-        // starbar of vs, but we don't bother.
-        // revisit facets in same order and calculate corner normals
+        // Note: to be completely correct, we should also recalculate corners just outside starbar of vs, but
+        // we do not bother.
+        // Revisit facets in same order and calculate corner normals.
         int ii = 0;
-        ForSCVertexFace(vs, s2) {
+        for (Simplex s2 : vs->faces_of_vertex()) {
           Vec3<Simplex> verts2;
           s2->vertices(verts2.data());
           corner_pnor.access(3 * anr[ii].fid + 2);
@@ -4163,7 +4048,6 @@ void psc_update_lod() {
           }
           ii++;
         }
-        EndFor;
       }
       assertx(psc_unify_area_list[i]);
       for (AreaData& ar : *psc_unify_area_list[i]) {
@@ -4183,8 +4067,7 @@ void psc_update_lod() {
       if (vs->isPrincipal()) {
         psc_principal_verts.remove(vs);
       } else {
-        ForSCSimplexParent(vs, e) { psc_principal_edges.remove(e); }
-        EndFor;
+        for (Simplex e : vs->getParents()) psc_principal_edges.remove(e);
       }
       // do split
       vsplit.applySplit(Kmesh);
@@ -4193,21 +4076,17 @@ void psc_update_lod() {
       if (vs->isPrincipal()) {
         psc_principal_verts.enter(vs);
       } else {
-        ForSCSimplexParent(vs, e) {
-          if (!e->isPrincipal()) continue;
-          psc_principal_edges.enter(e);
-        }
-        EndFor;
+        for (Simplex e : vs->getParents())
+          if (e->isPrincipal()) psc_principal_edges.enter(e);
       }
       if (vt->isPrincipal()) {
         psc_principal_verts.enter(vt);
       } else {
         Simplex vsvt = vs->edgeTo(vt);
-        ForSCSimplexParent(vt, e) {
+        for (Simplex e : vt->getParents()) {
           if (e == vsvt || !e->isPrincipal()) continue;
           psc_principal_edges.enter(e);
         }
-        EndFor;
       }
       if (psc_split_normal_list[i]) {
         // if normals cached use them
@@ -4221,23 +4100,21 @@ void psc_update_lod() {
         }
       } else {
         int cnt = 0;
-        ForSCVertexFace(vs, f) {
+        for (Simplex f : vs->faces_of_vertex()) {
           dummy_use(f);
           cnt++;
         }
-        EndFor;
-        ForSCVertexFace(vt, f) {
+        for (Simplex f : vt->faces_of_vertex()) {
           dummy_use(f);
           cnt++;
         }
-        EndFor;
         Array<NormalRecord>& anr = *new Array<NormalRecord>;
         psc_split_normal_list[i] = &anr;
         anr.reserve(cnt);
         NormalRecord nr;
         Vec3<Simplex> verts;
         // calculate facet normals
-        ForSCVertexFace(vs, s2) {
+        for (Simplex s2 : vs->faces_of_vertex()) {
           assertx(s2->getDim() == 2);
           s2->vertices(verts.data());
           nr.fid = s2->getId();
@@ -4246,8 +4123,7 @@ void psc_update_lod() {
           fct_pnor[nr.fid] = nr.fct_nor;
           anr.push(nr);
         }
-        EndFor;
-        ForSCVertexFace(vt, s2) {
+        for (Simplex s2 : vt->faces_of_vertex()) {
           assertx(s2->getDim() == 2);
           s2->vertices(verts.data());
           nr.fid = s2->getId();
@@ -4256,10 +4132,9 @@ void psc_update_lod() {
           fct_pnor[nr.fid] = nr.fct_nor;
           anr.push(nr);
         }
-        EndFor;
         // revisit facets in same order and calculate corner normals
         int ii = 0;
-        ForSCVertexFace(vs, s2) {
+        for (Simplex s2 : vs->faces_of_vertex()) {
           Vec3<Simplex> verts2;
           s2->vertices(verts2.data());
           corner_pnor.access(3 * anr[ii].fid + 2);
@@ -4269,8 +4144,7 @@ void psc_update_lod() {
           }
           ii++;
         }
-        EndFor;
-        ForSCVertexFace(vt, s2) {
+        for (Simplex s2 : vt->faces_of_vertex()) {
           Vec3<Simplex> verts2;
           s2->vertices(verts2.data());
           corner_pnor.access(3 * anr[ii].fid + 2);
@@ -4280,12 +4154,11 @@ void psc_update_lod() {
           }
           ii++;
         }
-        EndFor;
       }
       if (!psc_unify_area_list[i + 1]) {
         Array<AreaData>& aar = *new Array<AreaData>;
         psc_unify_area_list[i + 1] = &aar;
-        const Array<AreaData>& tmp = vsplit.getAreas();
+        CArrayView<AreaData> tmp = vsplit.getAreas();
         aar.reserve(tmp.num());
         AreaData ar;
         for_int(ii, tmp.num()) {
@@ -4303,8 +4176,7 @@ void psc_update_lod() {
   invalidate_dls();
   if (g3d::output) {
     float val = lod_use_nvertices ? psc_lod_num + 1 : psc_lod_level;
-    std::cout << "lod " << val << '\n';
-    std::cout.flush();
+    std::cout << "lod " << val << '\n' << std::flush;
   }
 }
 
@@ -4313,8 +4185,7 @@ void psc_wrap_draw(bool show) {
   if (!show) {
     if (button_active && yx_pointer_old[1] < k_one_slider_left_thresh) {
       float oldval = psc_lod_level;
-      Vec2<float> yxf;
-      assertx(HB::get_pointer(yxf));
+      const Vec2<float> yxf = HB::get_pointer().value();
       switch (button_active) {
         case 1: {
           psc_lod_level = 1.1f - (yxf[0]) * 1.2f;
@@ -4418,39 +4289,30 @@ inline float projected_area(float area, const Point& x) {
 }
 
 void draw_point(const Point& vp, float area) {
-  dummy_use(vp, area);
-#if !defined(HH_NO_GLU)
   float sphererad = sqrt(area / (TAU * 2));
-  unique_ptr<GLUquadricObj, decltype(&gluDeleteQuadric)> quadric{gluNewQuadric(), gluDeleteQuadric};
-  glPushMatrix();
-  {
-    glTranslatef(vp[0], vp[1], vp[2]);
-    float prad = projected_area(sphererad, vp);
-    int complexity;
-    if (prad < 10) {
-      complexity = 3;
-    } else if (prad < 40) {
-      complexity = 8;
-    } else {
-      complexity = 20;
-    }
-    gluSphere(quadric.get(), sphererad, complexity, complexity);
+  float prad = projected_area(sphererad, vp);
+  int complexity;
+  if (prad < 10) {
+    complexity = 3;
+  } else if (prad < 40) {
+    complexity = 8;
+  } else {
+    complexity = 20;
   }
-  glPopMatrix();
-#endif
+  render_sphere(vp, sphererad, complexity, complexity);
 }
 
 void draw_sc() {
   if (defining_dl) Warning("Display lists should be off ('DC') if zooming in/out");
   glShadeModel(GL_SMOOTH);
   initialize_lit();
-  update_mat_color(meshcolor);
+  update_mat_color(mesh_color);
   if (!ledges || lshading) {
     // Options lsmooth, lquickmode not handled.
     assertw(lsmooth);
     glBegin(GL_TRIANGLES);
     int i = 0;
-    ForSCSimplex(Kmesh, 2, s2) {
+    for (Simplex s2 : Kmesh.simplices_dim(2)) {
       if ((++i & 0x7F) == 0 && i) {
         glEnd();
         glBegin(GL_TRIANGLES);
@@ -4475,7 +4337,6 @@ void draw_sc() {
       glNormal3fv(n2.data());
       glVertex3fv(p2.data());
     }
-    EndFor;
     glEnd();
     // draw all 1-simplices with no parents
     psc_orphan_nedges = 0;
@@ -4516,7 +4377,7 @@ void draw_sc() {
           glVertex3fv(vk.data());
           glEnd();
           initialize_lit();
-          update_mat_color(meshcolor);
+          update_mat_color(mesh_color);
         } else {
           // draw as cylinder
           maybe_update_mat_diffuse(s_color[s1->getVAttribute()]);
@@ -4542,30 +4403,29 @@ void draw_sc() {
     initialize_unlit();
     set_thickness(thicknormal);
     glBegin(GL_LINES);
-    ForSCSimplex(Kmesh, 1, s) {
+    for (Simplex s : Kmesh.simplices_dim(1)) {
       update_cur_color(s->hasColor() ? s_color[s->getVAttribute()] : pix_edgecolor);
       Point p0 = s->getChild(0)->getPosition();
       Point p1 = s->getChild(1)->getPosition();
       glVertex3fv(p0.data());
       glVertex3fv(p1.data());
     }
-    EndFor;
     glEnd();
     set_thickness(thicka3d);
   }
 }
 
-// SCGeomorph stuff
+// ScGeomorph stuff
 bool grab_sc_gm(std::istream& is, std::stringstream& grab_stream) {
-  for (string sline; my_getline(is, sline);) {
-    if (begins_with(sline, "[SC Geomorph]")) return true;
-    grab_stream << sline << "\n";
+  for (string line; my_getline(is, line);) {
+    if (starts_with(line, "[SC Geomorph]")) return true;
+    grab_stream << line << "\n";
   }
   return false;
 }
 
 void read_sc_gm(const string& filename) {
-  HH_TIMER(__read_sc_gm);
+  HH_TIMER("__read_sc_gm");
   RFile fin(filename);
   // swallow stuff before first delim
   {
@@ -4593,7 +4453,7 @@ void read_sc_gm(const string& filename) {
   for_int(attrid, Kmesh2.materialNum()) {
     const char* s = Kmesh2.getMaterial(attrid);
     A3dColor co;
-    s_color[attrid] = parse_key_vec(s, "rgb", co) ? pack_color(co) : meshcolor.d;
+    s_color[attrid] = parse_key_vec(s, "rgb", co) ? pack_color(co) : mesh_color.d;
   }
   Gmorphs[sc_gm_morph].update(sc_gm_lod_level, corner_pnor);
   toggle_attribute(g_xobs.cullface);
@@ -4618,8 +4478,7 @@ void sc_gm_wrap_draw(bool show) {
   if (!show) {
     if (button_active && yx_pointer_old[1] < k_one_slider_left_thresh) {
       float oldval = sc_gm_lod_level;
-      Vec2<float> yxf;
-      assertx(HB::get_pointer(yxf));
+      const Vec2<float> yxf = HB::get_pointer().value();
       switch (button_active) {
         case 1: {
           sc_gm_lod_level = 1.1f - (yxf[0]) * 1.2f;
@@ -4635,9 +4494,7 @@ void sc_gm_wrap_draw(bool show) {
         default: assertnever("");
       }
       sc_gm_lod_level = clamp(sc_gm_lod_level, 0.f, 1.f);
-      if (sc_gm_lod_level != oldval) {
-        sc_gm_update_lod();
-      }
+      if (sc_gm_lod_level != oldval) sc_gm_update_lod();
       hw.redraw_later();
     }
   } else {
@@ -4689,13 +4546,13 @@ void draw_sc_gm(const SimplicialComplex& kmesh) {
   if (defining_dl) Warning("Display lists should be off ('DC') if zooming in/out");
   glShadeModel(GL_SMOOTH);
   initialize_lit();
-  update_mat_color(meshcolor);
+  update_mat_color(mesh_color);
   if (!ledges || lshading) {
     // Options lsmooth, lquickmode not handled.
     assertw(lsmooth);
     glBegin(GL_TRIANGLES);
     int i = 0;
-    ForSCSimplex(kmesh, 2, s2) {
+    for (Simplex s2 : kmesh.simplices_dim(2)) {
       if ((++i & 0x7F) == 0 && i) {
         glEnd();
         glBegin(GL_TRIANGLES);
@@ -4720,14 +4577,13 @@ void draw_sc_gm(const SimplicialComplex& kmesh) {
       glNormal3fv(n2.data());
       glVertex3fv(p2.data());
     }
-    EndFor;
     glEnd();
     // draw all 1-simplices with no parents
     psc_orphan_nedges = 0;
     glPushAttrib(GL_TRANSFORM_BIT);
     {  // save GL_NORMALIZE
       glEnable(GL_NORMALIZE);
-      ForSCSimplex(kmesh, 1, s1) {
+      for (Simplex s1 : kmesh.simplices_dim(1)) {
         if (s1->getArea() < 1e-3f) continue;
         psc_orphan_nedges++;
         const Point& vj = s1->getChild(0)->getPosition();
@@ -4761,19 +4617,18 @@ void draw_sc_gm(const SimplicialComplex& kmesh) {
           glVertex3fv(vk.data());
           glEnd();
           initialize_lit();
-          update_mat_color(meshcolor);
+          update_mat_color(mesh_color);
         } else {
           // draw as cylinder
           maybe_update_mat_diffuse(s_color[s1->getVAttribute()]);
           cyl.draw(vj, vk, rad);
         }
       }
-      EndFor;
     }
     glPopAttrib();
     // draw all 0-simplices with no parents
     psc_orphan_nverts = 0;
-    ForSCSimplex(kmesh, 0, s0) {
+    for (Simplex s0 : kmesh.simplices_dim(0)) {
       if (s0->getArea() < 1e-3f) continue;
       psc_orphan_nverts++;
       maybe_update_mat_diffuse(s_color[s0->getVAttribute()]);
@@ -4782,7 +4637,6 @@ void draw_sc_gm(const SimplicialComplex& kmesh) {
       if (area < 1e-3f) continue;
       draw_point(s0->getPosition(), area);
     }
-    EndFor;
   }
   if (ledges) {
     // Options cullbackedges, lquickmode not handled.
@@ -4790,14 +4644,13 @@ void draw_sc_gm(const SimplicialComplex& kmesh) {
     initialize_unlit();
     set_thickness(thicknormal);
     glBegin(GL_LINES);
-    ForSCSimplex(kmesh, 1, s) {
+    for (Simplex s : kmesh.simplices_dim(1)) {
       update_cur_color(s->hasColor() ? s_color[s->getVAttribute()] : pix_edgecolor);
       Point p0 = s->getChild(0)->getPosition();
       Point p1 = s->getChild(1)->getPosition();
       glVertex3fv(p0.data());
       glVertex3fv(p1.data());
     }
-    EndFor;
     glEnd();
     set_thickness(thicka3d);
   }
@@ -4810,6 +4663,7 @@ Cylinder::Cylinder(int depth) {
   // clip maximum depth
   depth = clamp(depth, 1, 3);
   int nv = 4 * (1 << (depth - 1));
+  assertx(nv > 0);  // For clang-tidy.
   int num = 2 * (nv + 1);
   _v.init(num);
   _n.init(num);
@@ -4833,7 +4687,7 @@ Cylinder::Cylinder(int depth) {
   assertx(ii == num);
   // normals
   for (i = 0; i < num; i += 2) {
-    Vector an(0.f, 0.f, 0.f);
+    Vector an{};
     an += ok_normalized(cross(_v[i], _v[i + 1], _v[(i + 2) % num]));
     an += ok_normalized(cross(_v[(i + 2) % num], _v[(i + 3) % num], _v[(i + 4) % num]));
     an = ok_normalized(an);
@@ -4872,11 +4726,11 @@ void Cylinder::draw() {
 }
 
 void Cylinder::draw(const Point& p1, const Point& p2, float r) {
-  float D = dist(p1, p2);
-  Vector u = (p2 - p1) / D;
-  float d = sqrt(u[0] * u[0] + u[1] * u[1]);
+  const float D = dist(p1, p2);
+  const Vector u = (p2 - p1) / D;
+  const float d = sqrt(u[0] * u[0] + u[1] * u[1]);
   // Matrix4 m;
-  SGrid<float, 4, 4> m = {
+  const SGrid<float, 4, 4> m = {
       {-u[1] / d, u[0] / d, 0.f, 0.f},
       {-(u[0] * u[2]) / d, -(u[1] * u[2]) / d, d, 0.f},
       {u[0], u[1], u[2], 0.f},
@@ -4915,13 +4769,13 @@ bool psc_key_press(char ch) {
 
 #if defined(DEF_PLY)
 
-// struct PlyIndices { int vi[3]; };
-// using PlyIndices = std::array<int, 3>;
 using PlyIndices = PArray<int, 4>;
 Array<Point> ply_vpos;
 Array<Vector> ply_vnor;
 Array<Pixel> ply_vrgb;
+Array<Uv> ply_vuv;
 Array<PlyIndices> ply_findices;
+Array<Vec3<Uv>> ply_fuv;
 
 // ply
 // format binary_big_endian 1.0
@@ -4934,7 +4788,9 @@ Array<PlyIndices> ply_findices;
 // property list uchar int vertex_indices
 // end_header
 //
-// property list uchar uint vertex_indices  # Blender
+// comment TextureFile TextureDouble_A.png
+// property list uchar uint vertex_indices  # Blender, on faces.
+// property list uchar float texcoord  # Meshlab, proj/evolving.
 
 // ply
 // format binary_little_endian 1.0
@@ -4951,241 +4807,237 @@ Array<PlyIndices> ply_findices;
 // end_header
 
 void read_ply(const string& filename) {
-  // HH_TIMER(_read_ply);
+  // HH_TIMER("_read_ply");
   RFile fi(filename);
-  {
-    string sline;
-    assertx(my_getline(fi(), sline));
-    assertx(sline == "ply");
-  }
+  std::istream& is = fi();
+  string line;
+  assertx(my_getline(is, line));
+  assertx(line == "ply");
+  const Map<std::string, int> dsizes = {
+      {"char", 1}, {"uchar", 1}, {"short", 2}, {"ushort", 2}, {"int", 4}, {"uint", 4}, {"float", 4}, {"double", 8},
+  };
   bool binary = false;
   bool bigendian = false;
-  int len_nfv = 1;  // default uchar
-  int state = 0;    // 0=undef, 1=vert, 2=face
-  int vnpos = 0, vnnor = 0, vnrgb = 0, vnother = 0, vnotherb = 0, flist = 0, fnother = 0, fnotherb = 0;
-  bool skip_vvalue = false;
-  for (string sline;;) {
-    assertx(my_getline(fi(), sline));
+  int num_element = 0;
+  string element;
+  int vnpos = 0, vnnor = 0, vnrgb = 0, vnuv = 0, vnother = 0, vnotherb = 0;
+  int len_nfv = 0;  // Size in bytes of number of vertex indices in each face.
+  int fnskip = 0, fnskipb = 0, fnother = 0, fnotherb = 0;
+  for (;;) {
+    assertx(my_getline(is, line));
     if (0) {
-    } else if (begins_with(sline, "comment ")) {
-      assertw(state == 0);
-    } else if (sline == "format ascii 1.0") {
-      assertx(state == 0);
-      binary = false;
-      bigendian = false;
-    } else if (sline == "format binary_big_endian 1.0") {
-      assertx(state == 0);
+    } else if (line == "format ascii 1.0") {
+      assertx(element == "");
+    } else if (line == "format binary_big_endian 1.0") {
+      assertx(element == "");
       binary = true;
       bigendian = true;
-    } else if (sline == "format binary_little_endian 1.0") {
-      assertx(state == 0);
+    } else if (line == "format binary_little_endian 1.0") {
+      assertx(element == "");
       binary = true;
-      bigendian = false;
-    } else if (begins_with(sline, "element vertex ")) {
-      assertx(state == 0);
-      int nv = 0;
-      assertx(sscanf(sline.c_str(), "element vertex %d", &nv) == 1);
-      assertx(nv > 0);
-      ply_vpos.init(nv);
-      state = 1;
-    } else if (begins_with(sline, "element face ")) {
-      assertx(state == 1);
-      int nf = 0;
-      assertx(sscanf(sline.c_str(), "element face %d", &nf) == 1);
-      assertw(nf > 0);
-      ply_findices.init(nf);
-      state = 2;
-    } else if (sline == "property float x" || sline == "property float y" || sline == "property float z") {
-      assertx(state == 1);
-      assertx(vnnor + vnrgb + vnother == 0);
-      vnpos++;
-    } else if (sline == "property float value") {
-      assertx(state == 1);
-      assertx(vnnor + vnrgb + vnother == 0);
-      skip_vvalue = true;
-    } else if (sline == "property float nx" || sline == "property float ny" || sline == "property float nz") {
-      assertx(state == 1);
-      assertx(vnrgb + vnother == 0);
-      vnnor++;
-    } else if (sline == "property uchar red" || sline == "property uchar green" || sline == "property uchar blue") {
-      assertx(state == 1);
-      assertx(vnother == 0);
-      vnrgb++;
-    } else if (sline == "property list uchar int vertex_indices" ||
-               sline == "property list uchar uint vertex_indices") {
-      assertx(state == 2);
-      assertx(fnother == 0);
-      flist++;
-    } else if (sline == "property list int int vertex_indices") {
-      assertx(state == 2);
-      assertx(fnother == 0);
-      flist++;
-      len_nfv = 4;
-    } else if (begins_with(sline, "property float")) {
-      if (state == 1) {
-        vnotherb += 4;
-        vnother++;
-      } else if (state == 2) {
-        fnotherb += 4;
-        fnother++;
+    } else if (starts_with(line, "comment ")) {
+      assertw(element == "");
+    } else if (starts_with(line, "obj_info ")) {  // Ignore, e.g., "obj_info 3D colored patch boundaries ".
+      assertw(element == "");
+
+    } else if (starts_with(line, "element ")) {
+      std::istringstream iss(line.substr(std::strlen("element ")));
+      int count;
+      assertx(iss >> element >> count && iss.eof());
+      assertx(count >= 0);
+      if (element == "vertex") {
+        assertx(num_element == 0);
+        if (count == 0) assertnever("ply: no vertices");
+        ply_vpos.init(count);
+      } else if (element == "face") {
+        assertx(num_element == 1);
+        if (count == 0) Warning("ply: no faces");
+        ply_findices.init(count);
       } else {
-        assertnever("");
+        assertx(num_element >= 2);
+        showf("ply: ignoring element named '%s'\n", element.c_str());
       }
-    } else if (begins_with(sline, "property int")) {
-      if (state == 1) {
-        vnotherb += 4;
-        vnother++;
-      } else if (state == 2) {
-        fnotherb += 4;
-        fnother++;
+      num_element++;
+
+    } else if (starts_with(line, "property list ")) {
+      assertx(element == "face");
+      std::istringstream iss(line.substr(std::strlen("property list ")));
+      string sizetype, dtype, name;
+      assertx(iss >> sizetype >> dtype >> name && iss.eof());
+      if (name == "vertex_indices") {
+        assertx(len_nfv == 0);
+        assertx(dtype == "int" || dtype == "uint");
+        len_nfv = dsizes.get(sizetype);
+      } else if (name == "texcoord") {
+        assertx(len_nfv > 0 && fnother == 0);
+        assertx(sizetype == "uchar" && dtype == "float");
+        ply_fuv.init(ply_findices.num());
       } else {
-        assertnever("");
+        assertnever("ply: property list not recognized");
       }
-    } else if (begins_with(sline, "property uchar")) {
-      if (state == 1) {
-        vnotherb += 1;
-        vnother++;
-      } else if (state == 2) {
-        fnotherb += 1;
-        fnother++;
+
+    } else if (starts_with(line, "property ")) {
+      assertx(element != "");
+      std::istringstream iss(line.substr(std::strlen("property ")));
+      string dtype, name;
+      assertx(iss >> dtype >> name && iss.eof());
+      const int dsize = dsizes.get(dtype);
+      if (element == "vertex") {
+        if (contains(V<string>("x", "y", "z"), name)) {
+          assertx(dtype == "float");
+          assertx(vnnor + vnrgb + vnuv + vnother == 0);
+          vnpos++;
+        } else if (contains(V<string>("nx", "ny", "nz"), name)) {
+          assertx(dtype == "float");
+          assertx(vnrgb + vnuv + vnother == 0);
+          vnnor++;
+        } else if (contains(V<string>("red", "green", "blue", "alpha"), name)) {
+          assertx(dsize == 1);
+          assertx(vnuv + vnother == 0);
+          vnrgb++;
+        } else if (contains(V<string>("s", "t"), name)) {
+          assertx(dtype == "float");
+          assertx(vnother == 0);
+          vnuv++;
+        } else {
+          showf("ply: ignoring vertex property '%s'\n", name.c_str());
+          vnotherb += dsize;
+          vnother++;
+        }
+      } else if (element == "face") {
+        showf("ply: ignoring face property '%s'\n", name.c_str());
+        if (len_nfv == 0) {
+          fnskipb += dsize;
+          fnskip++;
+        } else {
+          fnotherb += dsize;
+          fnother++;
+        }
       } else {
-        assertnever("");
+        // Ignore data after the faces.
       }
-    } else if (sline == "end_header") {
+
+    } else if (line == "end_header") {
       break;
     } else {
-      assertnever("ply field unknown in '" + sline + "'");
+      assertnever("ply: field unknown in '" + line + "'");
     }
   }
   assertx(vnpos == 3);
   assertx(vnnor == 0 || vnnor == 3);
   assertx(vnrgb == 0 || vnrgb == 3 || vnrgb == 4);
-  // assertw(flist == 1);  // there may be just vertices
+  assertx(vnuv == 0 || vnuv == 2);
+  assertx(!(vnuv > 0 && ply_fuv.num()));
+
+  if (ply_findices.num()) assertx(len_nfv);
   if (vnnor) ply_vnor.init(ply_vpos.num());
   if (vnrgb) ply_vrgb.init(ply_vpos.num(), Pixel::gray(0));
+  if (vnuv) ply_vuv.init(ply_vpos.num());
   if (binary) {
+    const auto read_value = [&](auto& value) {
+      assertx(read_binary_raw(is, ArView(value)));
+      bigendian ? from_std(&value) : from_dos(&value);
+    };
     for_int(i, ply_vpos.num()) {
-      assertx(read_binary_raw(fi(), ply_vpos[i].view()));
-      for_int(c, vnpos) {
-        if (bigendian)
-          from_std(&ply_vpos[i][c]);
-        else
-          from_dos(&ply_vpos[i][c]);
-      }
-      if (skip_vvalue) {
-        float dummy;
-        assertx(read_binary_raw(fi(), ArView(dummy)));
-      }
-      if (vnnor) assertx(read_binary_raw(fi(), ply_vnor[i].view()));
-      for_int(c, vnnor) {
-        if (bigendian)
-          from_std(&ply_vnor[i][c]);
-        else
-          from_dos(&ply_vnor[i][c]);
-      }
-      for_int(c, vnrgb) assertx(read_binary_raw(fi(), ArView(ply_vrgb[i][c])));
-      for_int(c, vnotherb) {
-        uchar dummy;
-        assertx(read_binary_raw(fi(), ArView(dummy)));
-      }
+      for_int(c, 3) read_value(ply_vpos[i][c]);
+      if (vnnor) for_int(c, vnnor) read_value(ply_vnor[i][c]);
+      for_int(c, vnrgb) assertx(read_binary_raw(is, ArView(ply_vrgb[i][c])));
+      for_int(c, vnuv) assertx(read_binary_std(is, ArView(ply_vuv[i][c])));
+      if (vnotherb) is.ignore(vnotherb);
     }
     for_int(i, ply_findices.num()) {
-      int ni;
+      if (fnskipb) is.ignore(fnskipb);
+      int nfv;
       if (len_nfv == 1) {
         uchar vi = 0;
-        assertx(read_binary_raw(fi(), ArView(vi)));
-        ni = vi;
+        assertx(read_binary_raw(is, ArView(vi)));
+        nfv = vi;
       } else if (len_nfv == 4) {
         int32_t vi = 0;
-        assertx(read_binary_raw(fi(), ArView(vi)));
-        ni = vi;
+        assertx(read_binary_std(is, ArView(vi)));
+        nfv = vi;
+        assertw(nfv >= 3);
       } else {
         assertnever("");
       }
-      ply_findices[i].init(ni);
-      for_int(j, ni) {
-        assertx(read_binary_raw(fi(), ArView(ply_findices[i][j])));
-        if (bigendian)
-          from_std(&ply_findices[i][j]);
-        else
-          from_dos(&ply_findices[i][j]);
-        assertx(ply_findices[i][j] < ply_vpos.num());
+      ply_findices[i].init(nfv);
+      for_int(j, nfv) read_value(ply_findices[i][j]);
+      for_int(j, nfv) assertx(ply_findices[i][j] < ply_vpos.num());
+      if (ply_fuv.num()) {
+        uchar n = 0;
+        assertx(read_binary_raw(is, ArView(n)));
+        assertx(n == 6);
+        for_int(j, 3) for_int(c, 2) read_value(ply_fuv[i][j][c]);
       }
-      for_int(c, fnotherb) {
-        uchar dummy;
-        assertx(read_binary_raw(fi(), ArView(dummy)));
-      }
+      if (fnotherb) is.ignore(fnotherb);
     }
+
   } else {
+    float dummy_float;
     for_int(i, ply_vpos.num()) {
-      for_int(c, vnpos) assertx(fi() >> ply_vpos[i][c]);
-      if (skip_vvalue) {
-        float dummy;
-        assertx(fi() >> dummy);
-      }
-      for_int(c, vnnor) assertx(fi() >> ply_vnor[i][c]);
+      for_int(c, vnpos) assertx(is >> ply_vpos[i][c]);
+      for_int(c, vnnor) assertx(is >> ply_vnor[i][c]);
       for_int(c, vnrgb) {
         int v;
-        assertx(fi() >> v);
-        ply_vrgb[i][c] = narrow_cast<uchar>(v);
+        assertx(is >> v);
+        ply_vrgb[i][c] = assert_narrow_cast<uchar>(v);
       }
-      for_int(c, vnother) {
-        float dummy;
-        assertx(fi() >> dummy);
-      }
+      for_int(c, vnuv) assertx(is >> ply_vuv[i][c]);
+      for_int(c, vnother) assertx(is >> dummy_float);
     }
     // SHOW(ply_vpos.last());
     for_int(i, ply_findices.num()) {
-      int ni = 0;
-      assertx(fi() >> ni);
-      ply_findices[i].init(ni);
-      for_int(j, ni) {
-        assertx(fi() >> ply_findices[i][j]);
+      for_int(c, fnskip) assertx(is >> dummy_float);
+      int nfv = 0;
+      assertx(is >> nfv);
+      assertw(nfv >= 3);
+      ply_findices[i].init(nfv);
+      for_int(j, nfv) {
+        assertx(is >> ply_findices[i][j]);
         assertx(ply_findices[i][j] < ply_vpos.num());
       }
-      for_int(c, fnother) {
-        float dummy;
-        assertx(fi() >> dummy);
+      if (ply_fuv.num()) {
+        int n = 0;
+        assertx(is >> n);
+        assertx(n == 6);
+        for_int(j, 3) for_int(c, 2) assertx(is >> ply_fuv[i][j][c]);
       }
+      for_int(c, fnother) assertx(is >> dummy_float);
     }
   }
   showf("G3d: (1) File:%s v=%d f=%d\n", filename.c_str(), ply_vpos.num(), ply_findices.num());
-  Bbox bbox;
-  for_int(i, ply_vpos.num()) bbox.union_with(ply_vpos[i]);
+  const Bbox bbox{ply_vpos};
   g3d::UpdateOb1Bbox(bbox);
   if (g3d::g_filename == "") g3d::g_filename = filename;
 }
 
 void draw_ply() {
   if (lsmooth && !ply_vnor.num()) {
-    ply_vnor.init(ply_vpos.num(), Vector(0.f, 0.f, 0.f));
+    ply_vnor.init(ply_vpos.num(), Vector{});
     for_int(i, ply_findices.num()) {
       Polygon poly;
-      for_int(j, ply_findices[i].num()) {
-        int vi = ply_findices[i][j];
-        poly.push(ply_vpos[vi]);
-      }
-      Vector vnor = poly.get_normal();
-      for_int(j, ply_findices[i].num()) {
-        int vi = ply_findices[i][j];
-        ply_vnor[vi] += vnor;
-      }
+      for_int(j, ply_findices[i].num()) poly.push(ply_vpos[ply_findices[i][j]]);
+      const Vector vnor = poly.get_normal();
+      for_int(j, ply_findices[i].num()) ply_vnor[ply_findices[i][j]] += vnor;
     }
     for (Vector& vnor : ply_vnor) assertw(vnor.normalize());
   }
-  // Options lsmooth, lquickmode not handled.
-  if (ply_findices.num() > 5000000 && defining_dl)
+  if (ply_findices.num() > 5'000'000 && defining_dl)
     Warning("Graphics card may not have sufficient memory for display list");
-  bool has_rgb = false;
+  if (texture_active) {
+    glDisable(GL_TEXTURE_GEN_S);
+    glDisable(GL_TEXTURE_GEN_T);
+  }
+  const bool has_rgb = ply_vrgb.num() > 0;
   if (!ledges || lshading) {
     glShadeModel(lsmooth || has_rgb ? GL_SMOOTH : GL_FLAT);
     initialize_lit();
-    update_mat_color(meshcolor);
+    update_mat_color(mesh_color);
     if (texture_active) {
       if (!texture_lit) {
         glShadeModel(GL_FLAT);
         initialize_unlit();
-        update_cur_color(meshcolor.d);
+        update_cur_color(mesh_color.d);
         set_light_ambient(0.f);
         if (texturenormal) normalmap_activate();
       }
@@ -5193,7 +5045,8 @@ void draw_ply() {
     const int buffer_ntriangles = g_is_ati ? std::numeric_limits<int>::max() : 32;
     int ntriangles = 0;
     for_int(i, ply_findices.num()) {
-      if (ply_findices[i].num() == 3) {
+      const auto& indices = ply_findices[i];
+      if (indices.num() == 3) {
         if (ntriangles == buffer_ntriangles) {
           glEnd();
           ntriangles = 0;
@@ -5208,13 +5061,18 @@ void draw_ply() {
         glBegin(GL_POLYGON);
       }
       if (!lsmooth) {
-        Vector fnormal = ok_normalized(
-            cross(ply_vpos[ply_findices[i][0]], ply_vpos[ply_findices[i][1]], ply_vpos[ply_findices[i][2]]));
+        Vector fnormal = ok_normalized(cross(ply_vpos[indices[0]], ply_vpos[indices[1]], ply_vpos[indices[2]]));
         glNormal3fv(fnormal.data());
       }
-      for_int(j, ply_findices[i].num()) {
-        int vi = ply_findices[i][j];
-        if (lsmooth && ply_vnor.num()) glNormal3fv(ply_vnor[vi].data());
+      for_int(j, indices.num()) {
+        int vi = indices[j];
+        if (texture_active) {
+          if (ply_fuv.num())
+            glTexCoord2fv(ply_fuv[i][j].data());
+          else if (ply_vuv.num())
+            glTexCoord2fv(ply_vuv[vi].data());
+        }
+        if (lsmooth) glNormal3fv(ply_vnor[vi].data());
         if (ply_vrgb.num()) glColor4ubv(ply_vrgb[vi].data());
         glVertex3fv(ply_vpos[vi].data());
       }
@@ -5238,18 +5096,18 @@ void draw_ply() {
     set_light_ambient(ambient);
     if (texturenormal) normalmap_deactivate();
   }
-  if (ledges && !texture_active) {
+  if (ledges) {
     glShadeModel(GL_FLAT);
     initialize_unlit();
     set_thickness(thicknormal);
     update_cur_color(pix_edgecolor);
     glBegin(GL_LINES);
-    for_int(i, ply_findices.num()) {
-      int n = ply_findices[i].num();
+    for (const auto& indices : ply_findices) {
+      int n = indices.num();
       for_int(j, n) {
         // draws most edges twice :-(
-        glVertex3fv(ply_vpos[ply_findices[i][(j + 0) % n]].data());
-        glVertex3fv(ply_vpos[ply_findices[i][(j + 1) % n]].data());
+        glVertex3fv(ply_vpos[indices[j]].data());
+        glVertex3fv(ply_vpos[indices[(j + 1) % n]].data());
       }
     }
     glEnd();

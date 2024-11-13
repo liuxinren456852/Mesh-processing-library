@@ -2,7 +2,6 @@
 #ifndef MESH_PROCESSING_LIBHH_ARRAYOP_H_
 #define MESH_PROCESSING_LIBHH_ARRAYOP_H_
 
-#include "libHh/Advanced.h"  // do_in_order
 #include "libHh/Array.h"
 #include "libHh/RangeOp.h"  // sort()
 #include "libHh/Vec.h"      // Vec2<>
@@ -13,20 +12,20 @@ namespace hh {
 template <typename T, typename... A> Array<T> concat(CArrayView<T> ar1, A&&... arr) {
   Array<T> ar;
   int i = ar1.num();
-  do_in_order{i += arr.num()...};
+  ((i += arr.num()), ...);
   ar.reserve(i);
   // ar.reserve(ar1.num() + narrow_cast<int>(sum(CArrayView<int>{arr.num()...})));  // requires sum()
   // Vec<int, sizeof...(arr)> t(arr.num()...); ar.reserve(ar1.num() + narrow_cast<int>(sum(t)));
   ar.push_array(ar1);
-  do_in_order{(ar.push_array(arr), 0)...};
+  (ar.push_array(arr), ...);
   return ar;
 }
 
 // Return a sorted, uniquified array of values gathered from a range.
-template <typename R, typename = enable_if_range_t<R>> Array<iterator_t<R>> sort_unique(const R& range) {
-  using T = iterator_t<R>;
-  using std::begin;
-  using std::end;
+template <typename Range, typename = enable_if_range_t<Range>>
+Array<range_value_t<Range>> sort_unique(const Range& range) {
+  using T = range_value_t<Range>;
+  using std::begin, std::end;
   Array<T> ar(begin(range), end(range));
   sort(ar);
   T* last = std::unique(ar.begin(), ar.end());
@@ -35,10 +34,10 @@ template <typename R, typename = enable_if_range_t<R>> Array<iterator_t<R>> sort
 }
 
 // Return the two closest values to the median of a list (or the same value twice if the list length is odd).
-template <typename R, typename = enable_if_range_t<R>> Vec2<iterator_t<R>> median_two(const R& range) {
-  using T = iterator_t<R>;
-  using std::begin;
-  using std::end;
+template <typename Range, typename = enable_if_range_t<Range>>
+Vec2<range_value_t<Range>> median_two(const Range& range) {
+  using T = range_value_t<Range>;
+  using std::begin, std::end;
   Array<T> ar(begin(range), end(range));
   assertx(ar.num());
   const int median_index = ar.num() / 2;
@@ -50,15 +49,16 @@ template <typename R, typename = enable_if_range_t<R>> Vec2<iterator_t<R>> media
 }
 
 // Return the median value of a list (or the mean of the two nearest values if the list length is even).
-template <typename R, typename = enable_if_range_t<R>> mean_type_t<iterator_t<R>> median(const R& range) {
+template <typename Range, typename = enable_if_range_t<Range>>
+mean_type_t<range_value_t<Range>> median(const Range& range) {
   return mean(median_two(range));
 }
 
 // Return the element with specified rank within range (where 0 <= rank < size(range) and rank == 0 is min element).
-template <typename R, typename = enable_if_range_t<R>> iterator_t<R> rank_element(const R& range, int rank) {
-  using T = iterator_t<R>;
-  using std::begin;
-  using std::end;
+template <typename Range, typename = enable_if_range_t<Range>>
+range_value_t<Range> rank_element(const Range& range, int rank) {
+  using T = range_value_t<Range>;
+  using std::begin, std::end;
   Array<T> ar(begin(range), end(range));
   assertx(ar.num());
   assertx(ar.ok(rank));
@@ -67,10 +67,11 @@ template <typename R, typename = enable_if_range_t<R>> iterator_t<R> rank_elemen
 }
 
 // Return element with fractional ranking within range (where 0. <= rankf <= 1. and rankf == 0. is min element).
-template <typename R, typename = enable_if_range_t<R>> iterator_t<R> rankf_element(const R& range, double rankf) {
+template <typename Range, typename = enable_if_range_t<Range>>
+range_value_t<Range> rankf_element(const Range& range, double rankf) {
   assertx(rankf >= 0. && rankf <= 1.);
   int num = narrow_cast<int>(distance(range));
-  int rank = static_cast<int>(floor(rankf * num));
+  int rank = int(floor(rankf * num));
   if (rank == num) rank--;
   return rank_element(range, rank);
 }

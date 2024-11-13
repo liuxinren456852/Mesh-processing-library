@@ -2,9 +2,9 @@
 #include "G3dOGL/G3d.h"
 
 #if defined(_WIN32)
-#include <io.h>  // dup2()
+#include <io.h>  // close(), dup2()
 #else
-#include <unistd.h>  // dup2()
+#include <unistd.h>  // close(), dup2()
 #endif
 
 #include "libHh/Args.h"
@@ -49,7 +49,7 @@ bool spacekill = false;
 bool cur_needs_redraw = false;
 bool prev_needed_redraw = false;
 int button_active = 0;
-struct sselected selected;
+Selected selected;
 Frame tview = Frame::identity();
 float zoom = 1.f;
 bool iostat = false;
@@ -64,16 +64,13 @@ Array<string> g_aargs1;    // not including argv0
 extern string g_filename;  // used in G3dOGL.cpp
 string g_filename;
 bool ob1_updated = false;
-float anglethresh = -1;  // no angle threshold set
-bool subdivmode = false;
+float anglethresh = -1.f;  // no angle threshold set
 bool lod_mode = false;
 float lod_level = 1.f;  // used to be default 0.f
 float override_frametime = 0.f;
 Point rec_point;
 
 const FlagMask mflag_ok = Mesh::allocate_flag();
-const FlagMask vflag_ok = Mesh::allocate_Vertex_flag();
-const FlagMask fflag_ok = Mesh::allocate_Face_flag();
 
 // *** object
 
@@ -119,7 +116,7 @@ const Point& object::center() const {
   return !_def || !mode_centroid ? rec_point : _pavg;
 }
 
-const Bbox& object::bbox() const {
+const Bbox<float, 3>& object::bbox() const {
   static const Bbox k_bbempty(Point(0.f, 0.f, 0.f), Point(0.f, 0.f, 0.f));
   if (!_def) {
     Warning("Undefined bbox");
@@ -137,17 +134,12 @@ void object::update() {
 }
 
 GMesh* object::get_mesh() {
-  if (_override_mesh) return _override_mesh;
   if (!_mesh) {
     _mesh = make_unique<GMesh>();
+    _mesh->gflags().flag(g3d::mflag_ok) = true;
     HB::segment_attach_mesh(_obn, _mesh.get());
   }
   return _mesh.get();
-}
-
-void object::override_mesh(GMesh* mesh) {
-  _override_mesh = mesh;
-  HB::segment_attach_mesh(_obn, get_mesh());
 }
 
 // *** objects
@@ -164,7 +156,7 @@ void objects::copy(int obf, int obt) {
 objects g_obs;
 
 // hook from HB
-void UpdateOb1Bbox(const Bbox& bbox) {
+void UpdateOb1Bbox(const Bbox<float, 3>& bbox) {
   assertx(!g_obs[1].defined());
   g_obs[1].enter_point(Point(bbox[0][0], bbox[0][1], bbox[0][2]));
   g_obs[1].enter_point(Point(bbox[0][0], bbox[0][1], bbox[1][2]));
@@ -188,15 +180,9 @@ namespace {
 void do_key(Args& args) { keystring += args.get_string(); }
 
 void do_frame(Args& args) {
-  Frame f;
-  int obn;
-  float z;
-  bool bin;
-  {
-    std::istringstream iss(args.get_string());
-    assertx(FrameIO::read(iss, f, obn, z, bin));
-  }
-  UpdateFrame(obn, f, z);
+  std::istringstream iss(args.get_string());
+  const ObjectFrame object_frame = FrameIO::read(iss).value();
+  UpdateFrame(object_frame);
 }
 
 bool s3dname_command_exists() { return command_exists_in_path("s3dname"); }
@@ -208,24 +194,24 @@ bool try_finding_it(const string& name) {
   }
   // Was "s3dname.bat" due to problem of launching "c:/perl/bin/perl /cygdrive/c/hh/bin/s3dname",
   //  but now solved using c:/cygwin/etc/fstab .
-  // Added "<$nul" so that "G3dOGL ~/data/mesh/cat.m &" does not freeze.  (Nowadays I use "G3d ~/data/mesh".)
+  // Added "<$nul" so that "G3dOGL ~/data/mesh/cat.m &" does not freeze.  (Nowadays we use "G3d ~/data/mesh".)
   // However, it still seems to freeze.  Added "close(STDIN)" inside s3dname.
   // #if 0 && defined(_WIN32)
-  //   const string snul = "nul";
+  //   const string s_nul = "nul";
   // #else
-  //   const string snul = "/dev/null";
+  //   const string s_nul = "/dev/null";
   // #endif
   // bash:  0<&- or <&-  close stdin.
-  // string com = "s3dname -s " + quote_arg_for_shell(name) + " <" + snul + " |";
+  // string com = "s3dname -s " + quote_arg_for_shell(name) + " <" + s_nul + " |";
   string com = "s3dname -s " + quote_arg_for_shell(name) + " |";
   try {
     RFile fi(com);  // may throw
-    string sline;
-    if (!my_getline(fi(), sline) || sline == "") {
+    string line;
+    if (!my_getline(fi(), line) || line == "") {
       if (k_debug) std::cerr << "(s3dname did not function)\n";
       return false;
     }
-    statefile = sline;
+    statefile = line;
   } catch (const std::runtime_error& ex) {
     if (k_debug) std::cerr << string("Could not launch s3dname: ") + ex.what();
     return false;
@@ -248,13 +234,14 @@ void ExpandStateFilename() {
   try_finding_it(statefile);
 }
 
-void UpdateFrame(int obn, const Frame& f, float z) {
+void UpdateFrame(const ObjectFrame& object_frame) {
+  const int obn = object_frame.obn;
   assertx(g_obs.legal(obn));
-  if (FrameIO::is_not_a_frame(f)) {
+  if (FrameIO::is_not_a_frame(object_frame.frame)) {
     g_obs[obn].set_vis(false);
   } else {
-    g_obs[obn].tm() = f;
-    if (!obn && z) zoom = z;
+    g_obs[obn].tm() = object_frame.frame;
+    if (!obn && object_frame.zoom) zoom = object_frame.zoom;
   }
 }
 
@@ -269,7 +256,7 @@ int main(int argc, const char** argv) {
   override_frametime = getenv_float("G3D_FRAMETIME", override_frametime);
   selected.frel = Frame::identity();
   bool hb_success = HB::init(aargs, KeyPressed, ButtonPressed, WheelTurned, Draw);
-  float hither = -1, yonder = -1;
+  float hither = -1.f, yonder = -1.f;
   bool eyeob = false;
   string statefilename;
   string title;
@@ -281,7 +268,7 @@ int main(int argc, const char** argv) {
   HH_ARGSP(zoom, "f : set focal length");
   HH_ARGSF(iostat, ": show I/O statistics");
   HH_ARGSF(timestat, ": show timing statistics");
-  HH_ARGSF(terse, ": turn diagnositcs off");
+  HH_ARGSF(terse, ": turn diagnostics off");
   HH_ARGSF(killeof, ": exit upon reading EOF");
   HH_ARGSF(spacekill, ": exit upon space key press");
   HH_ARGSP(statefilename, "s3dname : name of .s3d file (frames)");
@@ -290,21 +277,19 @@ int main(int argc, const char** argv) {
   HH_ARGSD(frame, "'frame' : change an object's frame");
   HH_ARGSF(input, ": read stdin even if have filenames");
   HH_ARGSF(asynchronousinput, ": update between EndFrames");
-  HH_ARGSF(subdivmode, ": object 2 := subdiv. surface of 1");
   HH_ARGSP(anglethresh, "angle : sharp dihedral angle");
   args.other_args_ok();
   if (!args.parse_and_extract(g_aargs1) || !hb_success) return 0;
   g_aargs1.shift();  // ignore argv0
-  if (hither >= 0) {
+  if (hither >= 0.f) {
     auto_hither = false;
     HB::set_hither(hither);
   }
-  if (yonder >= 0) HB::set_yonder(yonder);
+  if (yonder >= 0.f) HB::set_yonder(yonder);
   if (eyeob) g_obs.first = 0;
   if (g_aargs1.num() == 0) {
-    if (!g_obs[1].defined()) {  // not UpdateOb1Bbox()
+    if (!g_obs[1].defined())  // Not UpdateOb1Bbox().
       input = true;
-    }
   }
   if (g_aargs1.contains("-")) keep_stdin_open = true;
   if (input) {
@@ -318,16 +303,9 @@ int main(int argc, const char** argv) {
     // Close stdin, but do not leave fd0 empty in case we open another file.
     if (1) assertx(HH_POSIX(dup2)(1, 0) >= 0);
   }
-  auto func_try_set_gfilename = [](string str) {
+  const auto func_try_set_gfilename = [](string str) {
     if (g_filename != "") return;
-    if (contains(str, "objtoMesh.pl ")) {
-      auto i = str.find("objtoMesh.pl ");
-      str.erase(0, i + 13);
-      assertx(remove_at_end(str, " |"));
-      g_filename = str;
-      return;
-    }
-    if (begins_with(str, "bboxtomesh ") || ends_with(str, "|")) return;
+    if (starts_with(str, "bboxtomesh ") || is_pipe(str) || is_url(str)) return;
     g_filename = str;
   };
   if (eyeob && g_aargs1.num() >= 2) func_try_set_gfilename(g_aargs1[1]);
@@ -339,13 +317,13 @@ int main(int argc, const char** argv) {
   ReadFiles(true);
   if (input) ReadInput(true);
   // For command "PMview parasauru.pm -key Dt -st parasaur", window title ("parasaur") is poor choice;
-  //  it occurs because PMview passes name through -st, which is overriden.?
+  //  it occurs because PMview passes name through -st, which is overridden.?
   {
     string filenametail = get_path_tail(g_filename);
     HB::set_window_title(title != "" ? title : sform("G3D %.80s", filenametail.c_str()));
   }
   // always jump to good viewpoint
-  if (contains(keystring, 'j')) {
+  if (contains(keystring, 'j') || statefile == "none") {
     // do nothing
   } else if (statefile != "noname.s3d") {
     keystring += ",";
@@ -354,6 +332,10 @@ int main(int argc, const char** argv) {
   }
   HB::set_current_object(cob);
   HB::open();
+  if (!k_debug) {
+    hh_clean_up();
+    exit_immediately(0);  // Faster exit, without destruction of Pool data, etc.
+  }
   for (int i = g_obs.first; i <= g_obs.last; i++) {
     g_obs[i].clear();
     HB::clear_segment(i);

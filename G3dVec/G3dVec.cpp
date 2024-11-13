@@ -1,6 +1,6 @@
 // -*- C++ -*-  Copyright (c) Microsoft Corporation; see license.txt
 #include "G3dOGL/HB.h"
-#include "HW.h"
+#include "Hw.h"
 #include "libHh/A3dStream.h"
 #include "libHh/Args.h"
 #include "libHh/Array.h"
@@ -20,9 +20,6 @@ namespace g3d {
 extern string statefile;
 }  // namespace g3d
 
-extern float ambient;  // used in G3devent.cpp
-float ambient;
-
 namespace {
 
 constexpr int k_max_object = 1024;  // should be >= objects::MAX
@@ -37,8 +34,7 @@ using ConditionCode = unsigned;
 const ConditionCode k_code_hither = 1, k_code_yonder = 2, k_code_right = 4, k_code_left = 8, k_code_down = 16,
                     k_code_up = 32;
 
-struct DerivedHW : HW {
-  DerivedHW() = default;
+struct DerivedHw : Hw {
   bool key_press(string s) override;
   void button_press(int butnum, bool pressed, const Vec2<int>& yx) override;
   void wheel_turn(float v) override;
@@ -49,7 +45,7 @@ struct DerivedHW : HW {
   void (*_finpu)(){nullptr};
 };
 
-DerivedHW hw;
+DerivedHw hw;
 
 // per object attributes
 bool cullface;            // cull using polygon normal
@@ -109,7 +105,7 @@ struct coord {
   int frame;            // frame number it was last transformed
   ConditionCode ccode;  // clipping plane condition codes
   Point p;              // point in object frame
-  Point pt;             // point tranformed to view frame
+  Point pt;             // point transformed to view frame
   Point pp;             // point projected onto screen
 };
 
@@ -172,9 +168,9 @@ struct hbfaceinfo {
 };
 HH_SAC_ALLOCATE_FUNC(Mesh::MFace, hbfaceinfo, f_info);
 
-class GXobject {
+class GxObject {
  public:
-  ~GXobject() { assertx(!_opened); }
+  ~GxObject() { assertx(!_opened); }
   void open(bool todraw);
   void add(const A3dElem& el);
   void close();
@@ -182,7 +178,7 @@ class GXobject {
     assertx(!_opened);
     return _arn;
   }
-  GMesh* mesh{nullptr};
+  GMesh* _mesh{nullptr};
 
  private:
   bool _opened{false};
@@ -199,9 +195,9 @@ class GXobject {
   void append(unique_ptr<Node> n);
 };
 
-class GXobjects {
+class GxObjects {
  public:
-  GXobjects();
+  GxObjects();
   Vec<Frame, k_max_object> t;
   Vec<bool, k_max_object> vis;
   Vec<bool, k_max_object> cullface;
@@ -217,30 +213,30 @@ class GXobjects {
   void close();
   void make_link(int oldsegn, int newsegn);
   int defined(int segn) const;
-  GXobject& operator[](int i);
+  GxObject& operator[](int i);
 
  private:
   int _imin{k_max_object};
   int _imax{0};
-  // if _link[i], is a link to GXobject _link[i]
+  // if _link[i], is a link to GxObject _link[i]
   Vec<int, k_max_object> _link;
-  Array<unique_ptr<GXobject>> _ob;
+  Array<unique_ptr<GxObject>> _ob;
   int _segn{-1};
   bool _idraw;
-  GXobject* obp(int i) const;
+  GxObject* obp(int i) const;
 };
 
-bool GXobject::s_idraw;
-int GXobject::s_nuvertices;
-int GXobject::s_nusegments;
+bool GxObject::s_idraw;
+int GxObject::s_nuvertices;
+int GxObject::s_nusegments;
 
-GXobjects g_xobs;
+GxObjects g_xobs;
 
-// *** HW callback functions
+// *** Hw callback functions
 
-bool DerivedHW::key_press(string s) { return fkeyp(s); }
+bool DerivedHw::key_press(string s) { return fkeyp(s); }
 
-void DerivedHW::button_press(int butnum, bool pressed, const Vec2<int>& yx) {
+void DerivedHw::button_press(int butnum, bool pressed, const Vec2<int>& yx) {
   Vec2<float> yxf = convert<float>(yx) / convert<float>(win_dims);
   bool shift = get_key_modifier(EModifier::shift);
   fbutp(butnum, pressed, shift, yxf);
@@ -252,9 +248,9 @@ void DerivedHW::button_press(int butnum, bool pressed, const Vec2<int>& yx) {
   }
 }
 
-void DerivedHW::wheel_turn(float v) { fwheel(v); }
+void DerivedHw::wheel_turn(float v) { fwheel(v); }
 
-void DerivedHW::draw_window(const Vec2<int>& dims) {
+void DerivedHw::draw_window(const Vec2<int>& dims) {
   is_window = true;
   win_dims = dims;
   center_yx = dims / 2;
@@ -287,9 +283,9 @@ bool setup_ob(int i) {
   return true;
 }
 
-Point point_to_hlr_point(const Point& p) { return Point(p[0], .5f + p[1] * tzp1, .5f + p[2] * tzp2); }
+Point hlr_point_from_point(const Point& p) { return Point(p[0], .5f + p[1] * tzp1, .5f + p[2] * tzp2); }
 
-Point coord_to_hlr_point(const coord* c) { return point_to_hlr_point(c->pp); }
+Point hlr_point_from_coord(const coord* c) { return hlr_point_from_point(c->pp); }
 
 void transf2(coord* c) {
   const Point& pt = c->pt;
@@ -300,12 +296,12 @@ void transf2(coord* c) {
     c->pp[0] = -a;
     c->pp[1] = pp1 = pt[1] * a;
     c->pp[2] = pp2 = pt[2] * a;
-    if (pp1 < 0) {
+    if (pp1 < 0.f) {
       if (pp1 < -tclip1) ccode |= k_code_right;
     } else {
       if (pp1 > tclip1) ccode |= k_code_left;
     }
-    if (pp2 < 0) {
+    if (pp2 < 0.f) {
       if (pp2 < -tclip2) ccode |= k_code_down;
     } else {
       if (pp2 > tclip2) ccode |= k_code_up;
@@ -343,7 +339,7 @@ void inbound(coord* c, const coord* c2) {
 bool clip_side(coord* c1, const coord* c2, int axis, float val) {
   float s1 = c1->pt[0] + val * c1->pt[axis];
   float s2 = c2->pt[0] + val * c2->pt[axis];
-  if ((s1 <= 0 && s2 <= 0) || (s1 >= 0 && s2 >= 0)) {
+  if ((s1 <= 0.f && s2 <= 0.f) || (s1 >= 0.f && s2 >= 0.f)) {
     return true;  // numerical problem
   } else {
     c1->pt = interp(c1->pt, c2->pt, s2 / (s2 - s1));
@@ -375,16 +371,14 @@ bool clip2(coord* c, const coord* c2) {
 }
 
 inline bool is_cull(const Point& wp, const Vector& nor) {
-  // float a = dot(wp-conor, nor);
-  const Point& con = conor;
-  float a = ((wp[0] - con[0]) * nor[0] + (wp[1] - con[1]) * nor[1] + (wp[2] - con[2]) * nor[2]);
-  return reverse_cull ? (a < 0) : (a > 0);
+  const float a = dot(wp - conor, nor);
+  return reverse_cull ? (a < 0.f) : (a > 0.f);
 }
 
 void draw_point(coord* c) {
   transf(c);
   if (c->ccode) return;
-  if (lhlrmode && !hlr.draw_point(coord_to_hlr_point(c))) return;
+  if (lhlrmode && !hlr.draw_point(hlr_point_from_coord(c))) return;
   float c1s0 = center_yx[1] + c->pp[1] * tzs1;  // no need for + .5f because center_yx already centered
   float c1s1 = center_yx[0] + c->pp[2] * tzs2;
   hw.draw_point(V(c1s1, c1s0));
@@ -447,7 +441,7 @@ void slow_draw_seg(coord* c1, coord* c2) {
     }
   }
   if (lhlrmode) {
-    hlr.draw_segment(coord_to_hlr_point(c1), coord_to_hlr_point(c2));
+    hlr.draw_segment(hlr_point_from_coord(c1), hlr_point_from_coord(c2));
     return;
   }
   if (fisheye) {
@@ -592,12 +586,10 @@ void enter_hidden_polygon(Polygon& poly, int and_codes, int or_codes) {
     if (!poly.num()) return;
   }
   for (auto& p : poly) {
-    if (!assertw(p[0] > 0)) return;
-    float a = 1.f / p[0];
-    p[0] = -a;
-    p[1] = p[1] * a;
-    p[2] = p[2] * a;
-    p = point_to_hlr_point(p);
+    if (!assertw(p[0] > 0.f)) return;
+    const float a = 1.f / p[0];
+    const Point pp(-a, p[1] * a, p[2] * a);
+    p = hlr_point_from_point(pp);
   }
   // Note: polygons that are within hither/yonder are not clipped to
   // sides of screen -> so they may extend outside (0..1) range.
@@ -640,18 +632,9 @@ void enter_hidden_polygons(CArrayView<unique_ptr<Node>> arn) {
 
 void mesh_init(GMesh& mesh) {
   if (mesh.gflags().flag(g3d::mflag_ok).set(true)) return;
-  Set<Face> fredo;
-  for (Vertex v : mesh.vertices()) {
-    if (mesh.flags(v).flag(g3d::vflag_ok).set(true)) continue;
-    v_coord(v).init(mesh.point(v));
-    for (Face f : mesh.faces(v)) fredo.add(f);
-  }
-  for (Face f : mesh.faces()) {
-    if (!mesh.flags(f).flag(g3d::fflag_ok)) fredo.add(f);
-  }
+  for (Vertex v : mesh.vertices()) v_coord(v).init(mesh.point(v));
   Polygon poly;
-  for (Face f : fredo) {
-    mesh.flags(f).flag(g3d::fflag_ok) = true;
+  for (Face f : mesh.faces()) {
     mesh.polygon(f, poly);
     f_info(f).p = poly[0];
     f_info(f).v = poly.get_normal_dir();
@@ -667,9 +650,7 @@ void mesh_transform(GMesh& mesh) {
 }
 
 void mesh_visibility(GMesh& mesh) {
-  for (Face f : mesh.faces()) {
-    mesh.flags(f).flag(fflag_invisible) = cullface && is_cull(f_info(f).p, f_info(f).v);
-  }
+  for (Face f : mesh.faces()) mesh.flags(f).flag(fflag_invisible) = cullface && is_cull(f_info(f).p, f_info(f).v);
 }
 
 void enter_mesh_hidden_polygons(GMesh& mesh) {
@@ -759,7 +740,7 @@ void draw_all() {
       if (!setup_ob(i)) continue;
       frame++;
       enter_hidden_polygons(g_xobs[i].traverse());
-      if (g_xobs[i].mesh) enter_mesh_hidden_polygons(*g_xobs[i].mesh);
+      if (g_xobs[i]._mesh) enter_mesh_hidden_polygons(*g_xobs[i]._mesh);
     }
     frame = oldframe;
   }
@@ -769,7 +750,7 @@ void draw_all() {
     if (!setup_ob(i)) continue;
     frame++;
     draw_list(g_xobs[i].traverse());
-    if (g_xobs[i].mesh) draw_mesh(*g_xobs[i].mesh);
+    if (g_xobs[i]._mesh) draw_mesh(*g_xobs[i]._mesh);
     if (postscript) postscript->flush_write("% EndG3dObject\n");
   }
   if (lhlrmode) {
@@ -780,9 +761,8 @@ void draw_all() {
 
 void toggle_attribute(Vec<bool, k_max_object>& attrib) {
   bool allvis = true;
-  for (int i = g_xobs.min_segn(); i <= g_xobs.max_segn(); i++) {
+  for (int i = g_xobs.min_segn(); i <= g_xobs.max_segn(); i++)
     if (g_xobs.defined(i) && !g_xobs.vis[i]) allvis = false;
-  }
   for_int(i, k_max_object) {
     if (!allvis && (!g_xobs.defined(i) || !g_xobs.vis[i])) continue;
     bool& val = attrib[i];
@@ -792,9 +772,8 @@ void toggle_attribute(Vec<bool, k_max_object>& attrib) {
 
 void toggle_attribute(Vec<int, k_max_object>& attrib, int numstates) {
   bool allvis = true;
-  for (int i = g_xobs.min_segn(); i <= g_xobs.max_segn(); i++) {
+  for (int i = g_xobs.min_segn(); i <= g_xobs.max_segn(); i++)
     if (g_xobs.defined(i) && !g_xobs.vis[i]) allvis = false;
-  }
   for_int(i, k_max_object) {
     if (!allvis && (!g_xobs.defined(i) || !g_xobs.vis[i])) continue;
     int& val = attrib[i];
@@ -802,16 +781,16 @@ void toggle_attribute(Vec<int, k_max_object>& attrib, int numstates) {
   }
 }
 
-// *** GXobject
+// *** GxObject
 
-void GXobject::open(bool todraw) {
+void GxObject::open(bool todraw) {
   assertx(!_opened);
   _opened = true;
   s_idraw = todraw;
   s_nuvertices = s_nusegments = 0;
 }
 
-void GXobject::add(const A3dElem& el) {
+void GxObject::add(const A3dElem& el) {
   assertx(_opened);
   assertx(el.num());
   switch (el.type()) {
@@ -852,7 +831,7 @@ void GXobject::add(const A3dElem& el) {
   }
 }
 
-coord* GXobject::add_coord(const Point& p) {
+coord* GxObject::add_coord(const Point& p) {
   if (!nohash) {
     int vi = _hp.enter(p);
     if (vi < _ac.num()) return _ac[vi].get();
@@ -864,7 +843,7 @@ coord* GXobject::add_coord(const Point& p) {
   return c;
 }
 
-segment* GXobject::add_segment(coord* c1, coord* c2) {
+segment* GxObject::add_segment(coord* c1, coord* c2) {
   segment s;
   s.c1 = c1 < c2 ? c1 : c2;
   s.c2 = c1 < c2 ? c2 : c1;
@@ -875,7 +854,7 @@ segment* GXobject::add_segment(coord* c1, coord* c2) {
   return const_cast<segment*>(&sret);
 }
 
-void GXobject::append(unique_ptr<Node> n) {
+void GxObject::append(unique_ptr<Node> n) {
   _arnc.push(std::move(n));
   if (s_idraw) {
     assertx(is_window);
@@ -883,7 +862,7 @@ void GXobject::append(unique_ptr<Node> n) {
   }
 }
 
-void GXobject::close() {
+void GxObject::close() {
   assertx(_opened);
   _opened = false;
   if (datastat) SHOW(s_nuvertices, s_nusegments);
@@ -919,15 +898,15 @@ void GXobject::close() {
         s->c1->count -= 1;
         s->c2->count -= 1;
       }
-      maxc->count = 100000;
+      maxc->count = 100'000;
     }
   }
   _arn.push_array(std::move(_arnc));
 }
 
-// *** GXobjects
+// *** GxObjects
 
-GXobjects::GXobjects() : _ob(k_max_object) {
+GxObjects::GxObjects() : _ob(k_max_object) {
   for_int(i, k_max_object) {
     _link[i] = 0;
     t[i] = Frame::identity();
@@ -940,42 +919,42 @@ GXobjects::GXobjects() : _ob(k_max_object) {
   }
 }
 
-void GXobjects::clear(int segn) {
+void GxObjects::clear(int segn) {
   assertx(_segn == -1);
   assertx(_link.ok(segn));
   _link[segn] = 0;
   _ob[segn] = nullptr;
-  // I could update _imin, _imax here
+  // We could update _imin, _imax here.
 }
 
-void GXobjects::open(int segn) {
+void GxObjects::open(int segn) {
   assertx(_segn == -1);
   _segn = segn;
   assertx(_link.ok(segn));
   _link[_segn] = 0;
-  if (!_ob[_segn]) {  // create GXobject
+  if (!_ob[_segn]) {  // create GxObject
     _imin = min(_imin, _segn);
     _imax = max(_imax, _segn);
-    _ob[_segn] = make_unique<GXobject>();
+    _ob[_segn] = make_unique<GxObject>();
   }
   _idraw = is_window && setup_ob(_segn);
   if (_idraw) hw.begin_draw_visible();
   _ob[_segn]->open(_idraw);
 }
 
-void GXobjects::add(const A3dElem& el) {
+void GxObjects::add(const A3dElem& el) {
   assertx(_segn != -1);
   _ob[_segn]->add(el);
 }
 
-void GXobjects::close() {
+void GxObjects::close() {
   assertx(_segn != -1);
   _ob[_segn]->close();
   if (_idraw) hw.end_draw_visible();
   _segn = -1;
 }
 
-void GXobjects::make_link(int oldsegn, int newsegn) {
+void GxObjects::make_link(int oldsegn, int newsegn) {
   assertx(_segn == -1);
   assertx(_link.ok(oldsegn));
   assertx(_link.ok(newsegn));
@@ -986,7 +965,7 @@ void GXobjects::make_link(int oldsegn, int newsegn) {
   _imax = max(_imax, newsegn);
 }
 
-GXobject* GXobjects::obp(int i) const {
+GxObject* GxObjects::obp(int i) const {
   assertx(_link.ok(i));
   if (_ob[i]) return _ob[i].get();
   if (_link[i]) return _ob[_link[i]].get();
@@ -994,9 +973,9 @@ GXobject* GXobjects::obp(int i) const {
 }
 
 // recursion on links is not permitted, only simple link allowed
-int GXobjects::defined(int segn) const { return obp(segn) ? 1 : 0; }
+int GxObjects::defined(int segn) const { return obp(segn) ? 1 : 0; }
 
-GXobject& GXobjects::operator[](int i) { return *assertx(obp(i)); }
+GxObject& GxObjects::operator[](int i) { return *assertx(obp(i)); }
 
 }  // namespace
 
@@ -1049,11 +1028,12 @@ void HB::redraw_now() { hw.redraw_now(); }
 
 Vec2<int> HB::get_extents() { return win_dims; }
 
-bool HB::get_pointer(Vec2<float>& yxf) {
-  Vec2<int> yx;
-  if (!hw.get_pointer(yx)) return false;
-  yxf = convert<float>(yx) / convert<float>(win_dims);
-  return true;
+std::optional<Vec2<float>> HB::get_pointer() {
+  if (auto pointer = hw.get_pointer()) {
+    const Vec2<int> yx = *pointer;
+    return {convert<float>(yx) / convert<float>(win_dims)};
+  }
+  return {};
 }
 
 void HB::set_camera(const Frame& p_real_t, float p_real_zoom, const Frame& p_view_t, float p_view_zoom) {
@@ -1196,21 +1176,21 @@ highlight<v>ertices  show_sharp<e>dges
 }
 
 string HB::show_info() {
-  return sform("[X %c%c%c%c%c%c%c%c]", cullface ? 'b' : ' ', " lL"[culledge], reverse_cull ? 'r' : ' ',
-               highlight_vertices ? 'v' : ' ', show_sharp ? 'e' : ' ', fisheye ? 'f' : ' ', hlrmode ? 'h' : ' ',
+  return sform("[X %c%c%c%c%c%c%c%c]",  //
+               cullface ? 'b' : ' ', " lL"[culledge], reverse_cull ? 'r' : ' ', highlight_vertices ? 'v' : ' ',
+               show_sharp ? 'e' : ' ', fisheye ? 'f' : ' ', hlrmode ? 'h' : ' ',
                quickmode  ? 'q'
                : butquick ? 'Q'
                : buthlr   ? 'H'
                           : ' ');
 }
 
-bool HB::world_to_vdc(const Point& pi, float& xo, float& yo, float& zo) {
+HB::VdcResult HB::vdc_from_world(const Point& pi) {
+  HB::VdcResult result;
   Point p = pi * tcami;
-  zo = p[0];
-  if (p[0] < hither) return false;
-  xo = .5f - p[1] / p[0] * tzp1;
-  yo = .5f - p[2] / p[0] * tzp2;
-  return true;
+  result.zs = p[0];
+  if (p[0] >= hither) result.xys = V(.5f - p[1] / p[0] * tzp1, .5f - p[2] / p[0] * tzp2);
+  return result;
 }
 
 void HB::draw_segment(const Vec2<float>& yx1, const Vec2<float>& yx2) {
@@ -1240,7 +1220,7 @@ void HB::segment_add_object(const A3dElem& el) { g_xobs.add(el); }
 
 void HB::close_segment() { g_xobs.close(); }
 
-void HB::segment_attach_mesh(int segn, GMesh* pmesh) { g_xobs[segn].mesh = pmesh; }
+void HB::segment_attach_mesh(int segn, GMesh* pmesh) { g_xobs[segn]._mesh = pmesh; }
 
 void HB::make_segment_link(int oldsegn, int newsegn) { g_xobs.make_link(oldsegn, newsegn); }
 

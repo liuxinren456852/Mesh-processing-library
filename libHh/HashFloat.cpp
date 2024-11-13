@@ -12,7 +12,7 @@ namespace hh {
 // adjacent to numbers that are almost small.
 
 // TODO: Exploit the fact that "Adjacent floats (of the same sign) have adjacent integer representations".
-//  See http://randomascii.wordpress.com/2012/01/23/stupid-float-tricks-2/
+//  See https://randomascii.wordpress.com/2012/01/23/stupid-float-tricks-2/
 
 namespace {
 
@@ -52,7 +52,6 @@ inline uint32_t HashFloat::encode(float f) const {
 }
 
 float HashFloat::enter(float f) {
-#if 1
   bool foundexact = false;
   uint32_t bucketn = encode(f);
   float r = _m.retrieve(bucketn);  // retrieve closest float
@@ -81,49 +80,6 @@ float HashFloat::enter(float f) {
   }
   _m.enter(bucketn, fe);
   return f;
-#else
-  if (0 && getenv_bool("HASHFLOAT_DEBUG")) {
-#define DEBUG_SHOW(x) showf(#x##": %.9g -> %d -> %.9g\n", x, encode(x), _m.retrieve(encode(x)))
-    DEBUG_SHOW(f * _recip * _recip);
-    DEBUG_SHOW(f * _recip);
-    DEBUG_SHOW(f);
-    DEBUG_SHOW(f * _factor);
-    DEBUG_SHOW(f * _factor * _factor);
-  }
-  uint32_t bc = encode(f);
-  float r = _m.retrieve(bc);  // retrieve closest float
-  uint32_t bp = encode(f * _factor);
-  if (bp == bc) bp = encode(f * _factor * _factor);
-  uint32_t bm = encode(f * _recip);
-  if (bm == bc) bm = encode(f * _recip * _recip);
-  float rp = _m.retrieve(bp);
-  float rm = _m.retrieve(bm);
-  if (r) {
-    if (rp && abs(f - rp) < abs(f - r)) r = rp;
-    if (rm && abs(f - rm) < abs(f - r)) r = rm;
-    return r == k_small_val ? 0 : r;
-  }
-  if (rp && rm) {
-    Warning("HashFloat: Possible problem; try narrower buckets");
-    r = abs(f - rp) < abs(f - rm) ? rp : rm;
-  } else if (rp) {
-    r = rp;
-  } else if (rm) {
-    r = rm;
-  }
-  if (r) {  // found
-    // If found in adjacent cell, propagate close value here.
-    _m.enter(bc, r);
-    return r == k_small_val ? 0 : r;
-  }
-  float fe = f;
-  if (bc == k_small_key) {
-    fe = k_small_val;
-    f = 0.f;
-  }
-  _m.enter(bc, fe);
-  return f;
-#endif
 }
 
 void HashFloat::pre_consider(float f) {
@@ -138,7 +94,7 @@ void HashFloat::pre_consider(float f) {
   float rm = _m.retrieve(bm);
   if (rp && rm) {
     Warning("HashFloat: Performing unification");
-    assertx(bc != k_small_key);  // I have not thought of that case yet.
+    assertx(bc != k_small_key);  // That case has not yet been considered.
     _m.enter(bc, f);
     for (float ff = f;;) {
       ff *= _factor;

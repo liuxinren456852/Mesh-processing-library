@@ -7,17 +7,17 @@
 namespace hh {
 
 namespace details {
-template <typename T, int n> struct Vec_base;
+template <typename T, int n> struct VecBase;
 template <int D> class Vec_range;
 template <int D> class VecL_range;
 }  // namespace details
 
 // Allocated fixed-size 1D array with n elements of type T.
 // Like std::array<T, n>, but with constructors and "empty base class optimization" support for n == 0.
-template <typename T, int n> class Vec : details::Vec_base<T, n> {
-  static_assert(n >= 0, "");
+template <typename T, int n> class Vec : details::VecBase<T, n> {
+  static_assert(n >= 0);
   using type = Vec<T, n>;
-  using base = details::Vec_base<T, n>;
+  using base = details::VecBase<T, n>;
 
  public:
   Vec() = default;
@@ -39,7 +39,7 @@ template <typename T, int n> class Vec : details::Vec_base<T, n> {
   void assign(CArrayView<T> ar) { assign_i(ar); }
   constexpr type rev() const { return rev_aux(std::make_index_sequence<n>()); }
   bool in_range(const type& dims) const { return in_range(type::all(T{}), dims); }
-  bool in_range(const type& uL, const type& uU) const;  // true if uL[c] <= [c] < uU[c] for all c in [0, n - 1]
+  bool in_range(const type& uL, const type& uU) const;  // Return true if uL[c] <= [c] < uU[c] for all c in [0, n - 1].
   // type with(int i, const T& e) const& { type ar(*this); ar[i] = e; return ar; }
   type with(int i, T e) const& {
     type ar(*this);
@@ -50,40 +50,41 @@ template <typename T, int n> class Vec : details::Vec_base<T, n> {
     operator[](i) = std::move(e);
     return *this;
   }
-  bool operator==(const type& p) const {
-    for_int(i, n) {
-      if (!(a()[i] == p[i])) return false;
-    }
+  bool operator==(const type& rhs) const {
+    for_int(i, n) if (!(a()[i] == rhs[i])) return false;
     return true;
   }
-  bool operator!=(const type& p) const { return !(*this == p); }
+  bool operator!=(const type& rhs) const { return !(*this == rhs); }
   operator ArrayView<T>() { return view(); }
   operator CArrayView<T>() const { return view(); }
   ArrayView<T> view() { return ArrayView<T>(a(), n); }
   CArrayView<T> view() const { return CArrayView<T>(a(), n); }
-  template <int s> Vec<T, s>& head() { return segment<s>(0); }  // V(1, 2, 3).head<2>() == V(1, 2)
+  CArrayView<T> const_view() const { return CArrayView<T>(a(), n); }
+  type& vec() { return *this; }
+  const type& vec() const { return *this; }
+  template <int s> Vec<T, s>& head() { return segment<s>(0); }  // V(1, 2, 3).head<2>() == V(1, 2).
   template <int s> const Vec<T, s>& head() const { return segment<s>(0); }
   ArrayView<T> head(int s) { return segment(0, s); }
   CArrayView<T> head(int s) const { return segment(0, s); }
-  template <int s> Vec<T, s>& tail() { return segment<s>(n - s); }  // V(1, 2, 3).tail<2>() == V(2, 3)
+  template <int s> Vec<T, s>& tail() { return segment<s>(n - s); }  // V(1, 2, 3).tail<2>() == V(2, 3).
   template <int s> const Vec<T, s>& tail() const { return segment<s>(n - s); }
   ArrayView<T> tail(int s) { return segment(n - s, s); }
   CArrayView<T> tail(int s) const { return segment(n - s, s); }
-  template <int i, int s> Vec<T, s>& segment() {  // V(1, 2, 3, 4).segment<2, 1> == V(2, 3)
-    static_assert(i >= 0 && s >= 0 && i + s <= n, "");
+  template <int i, int s> Vec<T, s>& segment() {  // V(1, 2, 3, 4).segment<2, 1> == V(2, 3).
+    static_assert(i >= 0 && s >= 0 && i + s <= n);
     return *reinterpret_cast<Vec<T, s>*>(a() + i);
   }
   template <int i, int s> const Vec<T, s>& segment() const {
-    static_assert(i >= 0 && s >= 0 && i + s <= n, "");
+    static_assert(i >= 0 && s >= 0 && i + s <= n);
     return *reinterpret_cast<const Vec<T, s>*>(a() + i);
   }
-  template <int s> Vec<T, s>& segment(int i) {  // V(1, 2, 3, 4).segment<2>(1) == V(2, 3)
-    static_assert(s >= 0 && s <= n, "");
+  template <int s> Vec<T, s>& segment(int i) {  // V(1, 2, 3, 4).segment<2>(1) == V(2, 3).
+    static_assert(s >= 0 && s <= n);
     ASSERTXX(check(i, s));
     return *reinterpret_cast<Vec<T, s>*>(a() + i);
   }
   template <int s> const Vec<T, s>& segment(int i) const {
-    static_assert(s >= 0 && s <= n, "");
+    static_assert(s >= 0 && s <= n);
     ASSERTXX(check(i, s));
     return *reinterpret_cast<const Vec<T, s>*>(a() + i);
   }
@@ -92,9 +93,7 @@ template <typename T, int n> class Vec : details::Vec_base<T, n> {
   ArrayView<T> slice(int ib, int ie) { return segment(ib, ie - ib); }
   CArrayView<T> slice(int ib, int ie) const { return segment(ib, ie - ib); }
   template <typename U> Vec<U, n> cast() const {
-    Vec<U, n> v;
-    for_int(i, n) v[i] = static_cast<U>((*this)[i]);
-    return v;
+    return map([](const auto& e) { return static_cast<U>(e); });
   }
   using value_type = T;
   using iterator = T*;
@@ -110,6 +109,21 @@ template <typename T, int n> class Vec : details::Vec_base<T, n> {
   template <typename Func = T(int)> static type create(Func func) {
     return create_aux(func, std::make_index_sequence<n>());
   }
+  template <typename U = T> std::enable_if_t<std::is_floating_point_v<U>, bool> normalize() {
+    auto sum2 = mag2(*this);
+    if (!sum2) return false;
+    *this *= 1.f / sqrt(sum2);
+    return true;
+  }
+  // Enable structured bindings:
+  template <std::size_t Index> auto&& get() & { return get_helper<Index>(*this); }
+  template <std::size_t Index> auto&& get() && { return get_helper<Index>(*this); }
+  template <std::size_t Index> auto&& get() const& { return get_helper<Index>(*this); }
+  template <std::size_t Index> auto&& get() const&& { return get_helper<Index>(*this); }
+  // Defining friend functions in-class is convenient but unfortunately _MSC_VER (VS 2019) attempts to instantiate
+  // all these and this fails if "T - T" or "sqrt(T)" are undefined.
+  // friend T mag2(const type& vec) { return dot(vec, vec); }
+  // friend T mag(const type& vec) { return sqrt(mag2(vec)); }
 
  private:
   // C++ requires empty classes to have nonzero size to ensure object identity.
@@ -125,6 +139,10 @@ template <typename T, int n> class Vec : details::Vec_base<T, n> {
     SHOW(i, s, n);
     return false;
   }
+  template <std::size_t Index, typename TT> auto&& get_helper(TT&& t) const {
+    static_assert(Index >= 0 && Index < n);
+    return std::forward<TT>(t)[Index];
+  }
   template <size_t... Is> constexpr type rev_aux(std::index_sequence<Is...>) const {
     return type(base::operator[](n - 1 - Is)...);
   }
@@ -138,7 +156,6 @@ template <typename T, int n> class Vec : details::Vec_base<T, n> {
   // Default operator=() and copy_constructor are safe.
 };
 
-template <typename T, int n> using SArray = Vec<T, n>;  // backwards compatibility
 template <typename T> using Vec0 = Vec<T, 0>;
 template <typename T> using Vec1 = Vec<T, 1>;
 template <typename T> using Vec2 = Vec<T, 2>;
@@ -169,7 +186,8 @@ template <int n, typename T> constexpr Vec<T, n> ntimes(const T& v) { return Vec
 
 // Given container c, evaluate func() on each element (possibly changing the element type) and return new container.
 template <typename T, int n, typename Func> auto map(const Vec<T, n>& c, Func func) {
-  Vec<decltype(func(std::declval<T>())), n> nc;
+  using T2 = std::decay_t<decltype(func(std::declval<T>()))>;
+  Vec<T2, n> nc;
   for_int(i, n) nc[i] = func(c[i]);
   return nc;
 }
@@ -200,23 +218,65 @@ template <typename T, int n1> constexpr Vec<T, n1> concat(const Vec<T, n1>& a1) 
 
 //----------------------------------------------------------------------------
 
+// For Numeric T:
+
+template <typename T, int n> T dot(const Vec<T, n>& v1, const Vec<T, n>& v2) {
+  T sum{};
+  for_int(i, n) sum += v1[i] * v2[i];
+  return sum;
+}
+
+template <typename T, int n> T mag2(const Vec<T, n>& vec) { return dot(vec, vec); }
+template <typename T, int n> T mag(const Vec<T, n>& vec) { return sqrt(mag2(vec)); }
+
+template <typename T, int n> T dist2(const Vec<T, n>& v1, const Vec<T, n>& v2) { return mag2(v1 - v2); }
+template <typename T, int n> T dist(const Vec<T, n>& v1, const Vec<T, n>& v2) { return sqrt(dist2(v1, v2)); }
+
+template <typename T, int n> Vec<T, n> normalized(Vec<T, n> vec) {
+  assertx(vec.normalize());
+  return vec;
+}
+template <typename T, int n> Vec<T, n> ok_normalized(Vec<T, n> vec) {
+  vec.normalize();
+  return vec;
+}
+template <typename T, int n> Vec<T, n> fast_normalized(const Vec<T, n>& vec) { return vec / mag(vec); }
+
+template <typename T, int n> bool is_unit(const Vec<T, n>& vec, float tolerance = 1e-4f) {
+  return abs(mag2(vec) - 1.f) <= tolerance;
+}
+
+template <typename T> [[nodiscard]] T snap_coordinate(T value) {
+  const T eps = 1e-6f;
+  if (abs(value - 0.f) < eps) return 0.f;
+  if (abs(value - 1.f) < eps) return 1.f;
+  if (abs(value + 1.f) < eps) return -1.f;
+  return value;
+}
+
+template <typename T, int n> [[nodiscard]] Vec<T, n> snap_coordinates(Vec<T, n> vec) {
+  return map(vec, [](const T& e) { return snap_coordinate(e); });
+}
+
+//----------------------------------------------------------------------------
+
 namespace details {
 
-template <typename T, int n> struct Vec_base {  // allocates a member variable only if n > 0.
-  Vec_base() = default;
-  template <typename... Args> constexpr Vec_base(void*, Args&&... args) noexcept : _a{std::forward<Args>(args)...} {
+template <typename T, int n> struct VecBase {  // Allocates a member variable only if n > 0.
+  VecBase() = default;
+  template <typename... Args> constexpr VecBase(void*, Args&&... args) noexcept : _a{std::forward<Args>(args)...} {
     static_assert(sizeof...(args) == n, "#args");
   }
   T _a[n];
   T* a() noexcept { return &_a[0]; }
   const T* a() const noexcept { return &_a[0]; }
   T& operator[](int i) { return _a[i]; }
-  constexpr const T& operator[](int i) const { return _a[i]; }  // operator[] needed for constexpr
+  constexpr const T& operator[](int i) const { return _a[i]; }
 };
 
-template <typename T> struct Vec_base<T, 0> {
-  Vec_base() = default;
-  template <typename... Args> Vec_base(void*, Args&&... args) noexcept = delete;
+template <typename T> struct VecBase<T, 0> {
+  VecBase() = default;
+  template <typename... Args> VecBase(void*, Args&&... args) noexcept = delete;
   T* a() noexcept { return nullptr; }
   const T* a() const noexcept { return nullptr; }
   T& operator[](int) { return *implicit_cast<T*>(nullptr); }
@@ -246,22 +306,22 @@ template <int D> class Vec_iterator {
     dummy_use(rhs);
     ASSERTXX(rhs._uU == _uU);
     ASSERTXX(rhs._u[0] == _uU[0]);
-    return _u[0] < _uU[0];  // quick check against usual end()
+    return _u[0] < _uU[0];  // Quick check against usual end().
   }
   const Vec<int, D>& operator*() const { return (ASSERTX(_u[0] < _uU[0]), _u); }
   type& operator++() {
-    static_assert(D > 0, "");
+    static_assert(D > 0);
     ASSERTXX(_u[0] < _uU[0]);
     if (D == 1) {
       _u[0]++;
       return *this;
-    } else if (D == 2) {  // else VC12 does not unroll this tiny loop
+    } else if (D == 2) {  // Else VC12 does not unroll this tiny loop.
       if (++_u[1] < _uU[1]) return *this;
       _u[1] = 0;
       ++_u[0];
       return *this;
     } else {
-      int c = D - 1;  // here to avoid warning about loop condition in VC14 code analysis
+      int c = D - 1;  // Here to avoid warning about loop condition in VC14 code analysis.
       for (; c > 0; --c) {
         if (++_u[c] < _uU[c]) return *this;
         _u[c] = 0;
@@ -281,6 +341,11 @@ template <int D> class Vec_range {
   Vec_range(const Vec<int, D>& uU) : _uU(uU) {}
   Vec_iterator<D> begin() const { return Vec_iterator<D>(ntimes<D>(0), _uU); }
   Vec_iterator<D> end() const { return Vec_iterator<D>(_uU, _uU); }
+  size_t size() const {
+    size_t product = 1;
+    for_int(c, D) product *= _uU[c];
+    return product;
+  }
 
  private:
   Vec<int, D> _uU;
@@ -301,7 +366,7 @@ template <int D> class VecL_iterator {
   bool operator!=(const type& rhs) const {
     ASSERTX(rhs._uU == _uU);
     ASSERTX(rhs._u[0] == _uU[0]);
-    return _u[0] < _uU[0];  // quick check against usual end()
+    return _u[0] < _uU[0];  // Quick check against usual end().
   }
   const Vec<int, D>& operator*() const { return (ASSERTX(_u[0] < _uU[0]), _u); }
   type& operator++() {
@@ -325,6 +390,11 @@ template <int D> class VecL_range {
   VecL_range(const Vec<int, D>& uL, const Vec<int, D>& uU) : _uL(uL), _uU(uU) {}
   VecL_iterator<D> begin() const { return VecL_iterator<D>(_uL, _uU); }
   VecL_iterator<D> end() const { return VecL_iterator<D>(_uU, _uU); }
+  size_t size() const {
+    size_t product = 1;
+    for_int(c, D) product *= _uU[c] - _uL[c];
+    return product;
+  }
 
  private:
   Vec<int, D> _uL, _uU;
@@ -347,9 +417,16 @@ template <int D> details::VecL_range<D> range(const Vec<int, D>& uL, const Vec<i
 }
 
 // Backwards compatibility; deprecated.
-template <int D> details::Vec_range<D> coords(const Vec<int, D>& uU) { return range(uU); }
+template <int D> [[deprecated("Use for_coords() instead")]] details::Vec_range<D> coords(const Vec<int, D>& uU) {
+  return range(uU);
+}
+
 // Backwards compatibility; deprecated.
-template <int D> details::VecL_range<D> coordsL(const Vec<int, D>& uL, const Vec<int, D>& uU) { return range(uL, uU); }
+template <int D>
+[[deprecated("Use for_coordsL() instead")]] details::VecL_range<D> coordsL(const Vec<int, D>& uL,
+                                                                           const Vec<int, D>& uU) {
+  return range(uL, uU);
+}
 
 //----------------------------------------------------------------------------
 
@@ -373,8 +450,32 @@ template <typename T, int n> std::ostream& operator<<(std::ostream& os, const Ve
 }
 // Unlike would-be HH_DECLARE_OSTREAM_EOL(Vec<T, n>), it considers has_ostream_eol<T>.
 template <typename T, int n> struct has_ostream_eol_aux<Vec<T, n>> {
-  static constexpr bool value() { return has_ostream_eol<T>(); }
+  static constexpr bool value = has_ostream_eol<T>();
 };
+
+//----------------------------------------------------------------------------
+
+namespace details {
+
+template <typename, typename = std::void_t<>> struct has_value_type : std::false_type {};
+
+template <typename Class> struct has_value_type<Class, std::void_t<typename Class::value_type>> : std::true_type {};
+
+template <typename, typename = std::void_t<>> struct has_num : std::false_type {};
+
+template <typename Class>
+struct has_num<Class, std::void_t<decltype(Class::Num)>>
+    : std::bool_constant<std::is_same_v<decltype(Class::Num), const int>> {};
+
+template <typename Class, typename Enable = void> struct is_derived_from_vec : std::false_type {};
+
+template <typename Class>
+struct is_derived_from_vec<Class, std::enable_if_t<has_value_type<Class>::value && has_num<Class>::value>>
+    : std::is_base_of<Vec<typename Class::value_type, Class::Num>, Class> {};
+
+}  // namespace details
+
+template <typename Class> inline constexpr bool is_derived_from_vec_v = details::is_derived_from_vec<Class>::value;
 
 //----------------------------------------------------------------------------
 
@@ -383,19 +484,20 @@ template <typename T, int n> struct has_ostream_eol_aux<Vec<T, n>> {
 //  (2) there is no heap allocation.
 
 #if 0
-// I could define the following:
-template <typename T, typename T2, int n, typename RT = Vec<std::common_type_t<T, T2>>>
-Vec<RT, n> operator+(const Vec<T, n>& a1, const Vec<T2, n>& a2) {
-  Vec<RT, n> ar;
-  for_int(i, n) ar[i] = a1[i] + a2[i];
+// We could define the following:
+template <typename T, typename T2, int n>
+auto operator+(const Vec<T, n>& g1, const Vec<T2, n>& g2) {
+  // using ReturnType = std::common_type_t<T, T2>;
+  using ReturnType = std::decay_t<decltype(std::declval<T>() + std::declval<T2>())>;
+  Vec<ReturnType, n> ar;
+  for_int(i, n) ar[i] = g1[i] + g2[i];
   return ar;
 }
-//  (Stroustrup book had dubious value_type:  =Vec<Common_type<Value_type<T>, Value_type<T2>>, n> )
 #endif
 
 // Set of functions common to Vec.h, SGrid.h, Array.h, Grid.h
 // Note that RangeOp.h functions are valid here: mag2(), mag(), dist2(), dist(), dot(), is_zero(), compare().
-// See also floor(), ceil(), abs() generalized to Vec<> in MathOp.h
+// See also floor(), ceil(), abs() generalized to Vec<> in MathOp.h.
 #define TT template <typename T, int n>
 #define G Vec<T, n>
 #define F for_int(i, n)
@@ -439,11 +541,12 @@ TT G max(const G& g1, const G& g2) { G g; F { g[i] = max(g1[i], g2[i]); } return
 TT G interp(const G& g1, const G& g2, float f1 = 0.5f) {
   G g; F { g[i] = f1 * g1[i] + (1.f - f1) * g2[i]; } return g;
 }
-TT G interp(const G& g1, const G& g2, const G& g3, float f1 = 1.f / 3.f, float f2 = 1.f / 3.f) {
+TT G interp(const G& g1, const G& g2, const G& g3, float f1, float f2) {
   G g; F { g[i] = f1 * g1[i] + f2 * g2[i] + (1.f - f1 - f2) * g3[i]; } return g;
 }
+TT G interp(const G& g1, const G& g2, const G& g3) { return interp(g1, g2, g3, 1.f / 3.f, 1.f / 3.f); }
 TT G interp(const G& g1, const G& g2, const G& g3, const Vec3<float>& bary) {
-  // Vec3<float> == Bary;  may have bary[0] + bary[1] + bary[2] != 1.f
+  // Vec3<float> == Bary;  may have sum(bary) != 1.f
   G g; F { g[i] = bary[0] * g1[i] + bary[1] * g2[i] + bary[2] * g3[i]; } return g;
 }
 
@@ -452,7 +555,29 @@ TT G interp(const G& g1, const G& g2, const G& g3, const Vec3<float>& bary) {
 #undef G
 #undef TT
 
+template <typename SomeVec, typename = std::enable_if_t<is_derived_from_vec_v<SomeVec>>>
+SomeVec interp(const Vec3<SomeVec>& triple, float f1, float f2) {
+  return interp(triple[0], triple[1], triple[2], f1, f2);
+}
+template <typename SomeVec, typename = std::enable_if_t<is_derived_from_vec_v<SomeVec>>>
+SomeVec interp(const Vec3<SomeVec>& triple) {
+  return interp(triple[0], triple[1], triple[2]);
+}
+template <typename SomeVec, typename = std::enable_if_t<is_derived_from_vec_v<SomeVec>>>
+SomeVec interp(const Vec3<SomeVec>& triple, const Vec3<float>& bary) {
+  return interp(triple[0], triple[1], triple[2], bary);
+}
+
 }  // namespace hh
+
+// Enable structured bindings.
+namespace std {
+
+template <typename T, int n> struct tuple_size<hh::Vec<T, n>> : std::integral_constant<std::size_t, n> {};
+
+template <std::size_t Index, typename T, int n> struct tuple_element<Index, hh::Vec<T, n>> { using type = T; };
+
+}  // namespace std
 
 //----------------------------------------------------------------------------
 

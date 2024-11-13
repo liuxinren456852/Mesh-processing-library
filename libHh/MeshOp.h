@@ -16,11 +16,14 @@ namespace hh {
 // Given a mesh boundary edge, follow the boundary to construct a closed loop of edges.
 Queue<Edge> gather_boundary(const Mesh& mesh, Edge e);
 
-// Given a mesh face, find all faces conected through Face-Edge-Face connections.
+// Given a mesh face, find all faces connected through Face-Edge-Face connections.
 Set<Face> gather_component(const Mesh& mesh, Face f);
 
 // Given a mesh face, find all faces connected through vertices (at least as large as gather_component).
 Set<Face> gather_component_v(const Mesh& mesh, Face f);
+
+// Gather all connected components (connected through Face-Edge-Face), in order of increasing size.
+Array<Set<Face>> gather_components(const Mesh& mesh);
 
 // Return statistics on number of edges in each gather_boundary() loop.
 Stat mesh_stat_boundaries(const Mesh& mesh);
@@ -36,14 +39,15 @@ string mesh_genus_string(const Mesh& mesh);
 
 // For faces with > 3 sides, find a good triangulation of the vertices.
 // Return: success (may fail if some edges already exist).
-bool triangulate_face(GMesh& mesh, Face f);
+[[nodiscard]] bool triangulate_face(GMesh& mesh, Face f);
 
-// ret: cosf of signed angle away from "flattness" (== exterior angle)
-// range -1..1  (or -2 if a triangle is degenerate)
+// ret: cos of signed angle away from "flatness" (== exterior angle)
+// range -1.f .. 1.f  (1.f if flat, -1.f if foldover inwards/outwards)  (or -2.f if a triangle is degenerate).
 // For non-triangles, looks at average of immediate neighbors on either side.
 float edge_dihedral_angle_cos(const GMesh& mesh, Edge e);
 
-// ret: -10.f if degenerate
+// Return angle from -TAU / 2 to TAU / 2 (negative is concave), or -10.f if degeneracy.
+// (== exterior angle)  (cos(signed_dihedral_angle()) == dihedral_angle_cos()).
 float edge_signed_dihedral_angle(const GMesh& mesh, Edge e);
 
 // Must be a nice interior vertex.
@@ -60,7 +64,7 @@ float collapse_edge_volume_criterion(const GMesh& mesh, Edge e);
 // Return memoryless QEM and penalize bad dihedral angles.
 float collapse_edge_qem_criterion(const GMesh& mesh, Edge e);
 
-// Fill the one or more holes associated with the boundary loop containing erep.  Return the new multi-sided faces.
+// Fill the one or more holes associated with the boundary loop containing erep.  Return the new multisided faces.
 Set<Face> mesh_remove_boundary(Mesh& mesh, Edge erep);
 
 // *** Retriangulate
@@ -68,7 +72,7 @@ Set<Face> mesh_remove_boundary(Mesh& mesh, Edge erep);
 using EDGEF = bool (*)(const GMesh& m, Edge e);
 
 // For all Mesh Edge e,
-//  if dihedral angle cosf of faces both before and after is > mincos, and if (fdoswap(e)) then
+//  if dihedral angle cos of faces both before and after is > mincos, and if (fdoswap(e)) then
 //    call fdel(e), swap the edge, and call fadd(newedge).
 // Consider all affect edges again.
 // Return number of edges swapped.
@@ -101,27 +105,24 @@ bool diagonal_distance_swap_criterion(const GMesh& mesh, Edge e);
 // If string(v) contains normal information, use that instead.
 class Vnors {
  public:
-  Vnors() = default;
-  Vnors(Vnors&& v) : _mfnor(std::move(v._mfnor)), _nor(v._nor) {}  // = default
   enum class EType { unspecified, angle, sum, area, sloan, subdiv };
-  void compute(const GMesh& mesh, Vertex v, EType nortype = EType::unspecified);
+  Vnors(const GMesh& mesh, Vertex v, EType nortype = EType::unspecified);
   bool is_unique() const { return !_mfnor; }
   const Vector& unique_nor() const { return (ASSERTX(is_unique()), _nor); }
   const Vector& face_nor(Face f) const { return (ASSERTX(!is_unique()), _mfnor->get(f)); }
-  const Vector& get_nor(Face f) const { return _mfnor ? _mfnor->get(f) : _nor; }  // in any case
-  void clear();
+  const Vector& get_nor(Face f) const { return _mfnor ? _mfnor->get(f) : _nor; }  // In any case.
 
  private:
-  unique_ptr<Map<Face, Vector>> _mfnor;  // if !_mfnor, common normal is stored in _nor
-  Vector _nor;
-  Polygon _tmp_poly;
+  unique_ptr<Map<Face, Vector>> _mfnor;  // If !_mfnor, the unique normal is stored in _nor.
+  Vector _nor{};
 };
 
 // *** Projection onto mesh
 
-// If fast != 0 and point p projects within interior of face and edges of face are not sharp,
+// If fast is true and point p projects within interior of face and edges of face are not sharp,
 //   do not consider neighboring faces.
-float project_point_neighb(const GMesh& mesh, const Point& p, Face& pf, Bary& ret_bary, Point& ret_clp, bool fast);
+float project_point_neighborhood(const GMesh& mesh, const Point& p, Face& pf, Bary& ret_bary, Point& ret_clp,
+                                 bool fast);
 
 }  // namespace hh
 

@@ -7,7 +7,6 @@
 #include "libHh/Quaternion.h"
 #include "libHh/Random.h"
 #include "libHh/StringOp.h"
-#include "libHh/SubMesh.h"
 using namespace hh;
 
 namespace g3d {
@@ -15,65 +14,51 @@ namespace g3d {
 constexpr float k_globe_radius = .65f;  // radius on screen (max = 1)
 
 static int screenrate;
-static unique_ptr<SubMesh> smesh;
-static HH_STATNP(Sipf);
-static HH_STATNP(Sspf);
+static HH_STAT_NP(Sipf);
+static HH_STAT_NP(Sspf);
 static float cumtime = 0.f;
 
 static const int g_g3d_ellipse = getenv_int("G3D_ELLIPSE");
-static const bool g_g3d_demofly = getenv_bool("G3D_DEMOFLY");
 
-static void recompute_sharpe(GMesh& mesh, const Set<Edge>& eredo) {
-  assertx(anglethresh >= 0);
-  float vcos = std::cos(to_rad(anglethresh));
-  for (Edge e : eredo) {
+template <typename RangeEdges> static void recompute_sharpe(GMesh& mesh, const RangeEdges& range_edges) {
+  assertx(anglethresh >= 0.f);
+  float vcos = std::cos(rad_from_deg(anglethresh));
+  for (Edge e : range_edges) {
     if (mesh.is_boundary(e)) continue;
     bool is_sharp = edge_dihedral_angle_cos(mesh, e) < vcos;
     if (mesh.flags(e).flag(GMesh::eflag_sharp) == is_sharp) continue;
     mesh.flags(e).flag(GMesh::eflag_sharp) = is_sharp;
     mesh.set_string(e, is_sharp ? "sharp" : nullptr);
-    mesh.flags(mesh.vertex1(e)).flag(vflag_ok) = false;
-    mesh.flags(mesh.vertex2(e)).flag(vflag_ok) = false;
     mesh.gflags().flag(mflag_ok) = false;
   }
-  if (subdivmode) ClearSubMesh();
 }
 
-void RecomputeSharpEdges(GMesh& mesh) {
-  Set<Edge> eredo;
-  for (Edge e : mesh.edges()) eredo.enter(e);
-  recompute_sharpe(mesh, eredo);
-}
+void RecomputeSharpEdges(GMesh& mesh) { recompute_sharpe(mesh, mesh.edges()); }
 
 static void recompute_all_sharpe() {
-  for (int obn = g_obs.first; obn <= g_obs.last; obn++) {
-    RecomputeSharpEdges(*g_obs[obn].get_mesh());
-  }
+  for (int obn = g_obs.first; obn <= g_obs.last; obn++) RecomputeSharpEdges(*g_obs[obn].get_mesh());
 }
 
 void Applyq(const Frame& tq) {
-  Vector vtran = viewmode || cob == 0 ? Vector(0.f, 0.f, 0.f) : to_Vector(g_obs[cob].center());
+  Vector vtran = viewmode || cob == 0 ? Vector(0.f, 0.f, 0.f) : Vector(g_obs[cob].center());
   if (sizemode && !editmode && !lod_mode) {
     Frame f = Frame::identity();
     for_int(c, 3) f[c][c] = std::exp(tq.p()[c] / ddistance);
     g_obs[cob].tm() = Frame::translation(-vtran) * f * Frame::translation(vtran) * g_obs[cob].t();
     return;
   }
-  GMesh& mesh = *selected.mesh;
-  Vertex v = selected.v;
   static Frame fedit;
   bool ledit = editmode && button_active != 1;  // button1 has old semantics
-  if (ledit && (!button_active || !v)) return;
-  if (ledit) fedit = g_obs[selected.obn].t();
-  // Frame::translation(mesh.point(v));
+  if (ledit && !(button_active && selected.selected_vertex)) return;
+  if (ledit) fedit = g_obs[selected.selected_vertex->obn].t();
   Frame& fm = ledit ? fedit : viewmode ? tview : g_obs[cob].tm();
   bool is_eye_move = eye_move && !viewmode && !ledit && cob != obview;
   Frame told = fm;
   if (object_mode) {
-    // I have no idea what this does anymore, but it seems to work
+    // Complicated change-of-frame to apply the correct transformation.
     const int ob = obview;
     Frame f = Frame::translation(vtran) * fm * ~g_obs[ob].t();
-    Vector vtran2 = to_Vector(f.p());
+    Vector vtran2 = f.p();
     f *= Frame::translation(-vtran2) * tq * Frame::translation(vtran2);
     fm = Frame::translation(-vtran) * f * g_obs[ob].t();
   } else {
@@ -85,18 +70,16 @@ void Applyq(const Frame& tq) {
     g_obs[cob].tm() = told;
   }
   if (ledit) {
-    Point p = mesh.point(v) * fm * ~told;
-    mesh.set_point(v, p);
-    mesh.flags(v).flag(vflag_ok) = false;
-    mesh.gflags().flag(mflag_ok) = false;
-    if (sizemode && anglethresh >= 0) {
+    auto& [_, mesh, v] = *selected.selected_vertex;
+    Point p = mesh->point(v) * fm * ~told;
+    mesh->set_point(v, p);
+    mesh->gflags().flag(mflag_ok) = false;
+    if (sizemode && anglethresh >= 0.f) {
       Set<Edge> eredo;
-      for (Edge e : mesh.edges(v)) eredo.enter(e);
-      for (Face f : mesh.faces(v)) {
-        if (!mesh.is_triangle(f)) continue;
-        eredo.enter(mesh.opp_edge(v, f));
-      }
-      recompute_sharpe(mesh, eredo);
+      for (Edge e : mesh->edges(v)) eredo.enter(e);
+      for (Face f : mesh->faces(v))
+        if (mesh->is_triangle(f)) eredo.enter(mesh->opp_edge(v, f));
+      recompute_sharpe(*mesh, eredo);
     }
   }
 }
@@ -114,9 +97,7 @@ static void get_time() {
     if (!hist_spf) hist_spf = make_unique<Histogram>("G3d_hist_spf.txt", 20);
     hist_spf->add(fchange);
   }
-  if (timestat) {
-    Sspf.enter(fchange);
-  }
+  if (timestat) Sspf.enter(fchange);
   if (fchange > 1.f) fchange = 1.f;
   nscreens++;
   static double lastsec;
@@ -205,8 +186,8 @@ static void handle_sliders(bool show, float yq) {
     else
       *val *= std::exp(-yq);
     if (val == &anglethresh) {
-      if (anglethresh <= 0) anglethresh = 45;
-      if (anglethresh > 180) anglethresh = 180;
+      if (anglethresh <= 0.f) anglethresh = 45.f;
+      if (anglethresh > 180.f) anglethresh = 180.f;
       recompute_all_sharpe();
     } else if (val == &lod_level) {
       lod_level = clamp(lod_level, 0.f, 1.f);
@@ -305,7 +286,7 @@ static void act_button1(const Vec2<float>& yxq) {
   } else {  // rotate
     // Applyq(Frame::rotation(2, yxq[1]) * Frame::rotation(1, -yxq[0]));
     Vector axis(0.f, -yxq[0], yxq[1]);
-    Quaternion q(axis, float(mag(yxq)));
+    Quaternion q(axis, mag(yxq));
     Applyq(to_Frame(q));
   }
 }
@@ -337,11 +318,12 @@ static void act_button3(const Vec2<float>& yxq) {
 
 static void act_button() {
   assertx(button_active);
-  Vec2<float> yx;  // (0, 0)=(top, left)
-  if (!assertw(HB::get_pointer(yx))) {
+  const auto pointer = assertw(HB::get_pointer());
+  if (!pointer) {
     if (!keep_active) button_active = 0;
     return;
   }
+  const Vec2<float> yx = *pointer;
   selected.yx = yx;
   Vec2<float> yxi;
   if (ratemode == ERatemode::step) {
@@ -355,7 +337,7 @@ static void act_button() {
   Vec2<float> yxf;
   if (expo && ratemode != ERatemode::position) {
     // f +- 0 to 8 to 64  * .2 == 0 to 1.6 to 13
-    float c1 = 1.f;  // 20120417 was previously .2f;
+    float c1 = 1.f;  // 2012-04-17 was previously .2f;
     for_int(c, 2) yxf[c] = pow(abs(yxi[c]) * 2.f, 3.f) * sign(yxi[c]) * c1;
   } else {
     yxf = yxi;
@@ -378,126 +360,16 @@ static void act_button() {
   if (ratemode == ERatemode::step) button_active = 0;
 }
 
-static void fly_g3d_demofly(Vec2<float>& yxf) {
-  bool cursor_is_high = yxf[0] < 0.f;
-  static bool idle_mode;
-  bool new_idle_mode = (yxf[1] < 0.f || yxf[1] > 1.f || yxf[0] < 0.f || yxf[0] > 1.f);
-  bool out_of_idle = idle_mode && !new_idle_mode;
-  idle_mode = new_idle_mode;
-  static float idle_dist;
-  static bool seeking_point = false;
-  static float turn_rate;  // -1.f to 1.f;  0.f == straight
-  if (!idle_mode) {
-    demofly_idle_time = 0.f;
-    idle_dist = 0.f;
-    turn_rate = 0.f;
-    seeking_point = false;
-    if (obview != 0 || !tview.is_ident()) yxf[0] = .5f;  // if top-view, do not climb or dive
-    if (out_of_idle) {
-      while (demofly_mode) KeyPressed(" ");
-    }
-  } else {
-    yxf = twice(.5f);
-    //
-    if (seeking_point) turn_rate = 0.f;
-    if (turn_rate) yxf[1] = .5f + turn_rate * .07f;
-    //
-    const Frame& frame = g_obs[0].t();
-    Vec3<float> ang = frame_to_euler_angles(frame);
-    //
-    float pitch = ang[1];                 // positive == going_down!
-    const float min_pitch = to_rad(6.f);  // 6 degrees
-    if (frame.p()[2] < .014f && pitch > -min_pitch) {
-      if (0) showf("Pulling up pitch=%f\n", pitch);
-      yxf[0] = .4f;
-    }
-    if (frame.p()[2] > .025f && pitch < +min_pitch) {
-      if (0) showf("Pushing down pitch=%f\n", pitch);
-      yxf[0] = .6f;
-    }
-    //
-    static Point point_desired;
-    const float margin = 0.1f;
-    bool within_margins = (frame.p()[0] > 0.f + margin && frame.p()[0] < 1.f - margin && frame.p()[1] > 0.f + margin &&
-                           frame.p()[1] < 1.f - margin);
-    if (seeking_point && within_margins) {
-      seeking_point = false;
-      if (0) SHOW("seeking_point false");
-    }
-    if (!seeking_point && !within_margins) {
-      seeking_point = true;
-      for_int(c, 2) point_desired[c] = .2f + .6f * Random::G.unif();
-      assertx(!point_desired[2]);
-      if (0) SHOW(point_desired);
-    }
-    if (seeking_point) {
-      float yaw_angle_desired = std::atan2(point_desired[1] - frame.p()[1], point_desired[0] - frame.p()[0]);
-      float yaw_angle_diff = yaw_angle_desired - ang[0];
-      if (yaw_angle_diff < -TAU / 2) yaw_angle_diff += TAU;
-      if (yaw_angle_diff > +TAU / 2) yaw_angle_diff -= TAU;
-      float abs_diff = abs(yaw_angle_diff);
-      assertx(abs_diff <= TAU / 2);
-      bool large_diff = abs_diff > to_rad(10.f);
-      bool small_diff = abs_diff > to_rad(4.f);
-      static bool honing;
-      if (large_diff) honing = true;
-      if (!small_diff) honing = false;
-      if (honing) {
-        if (yaw_angle_diff > 0.f) {
-          yxf[1] = .5f - .25f * (ddistance / .0625f);  // turning left
-        } else {
-          yxf[1] = .5f + .25f * (ddistance / .0625f);  // turning right
-        }
-      }
-    }
-    float prev_idle_time = demofly_idle_time, prev_idle_dist = idle_dist;
-    demofly_idle_time += fchange;
-    idle_dist += ddistance / .015625f * fchange;
-    if (cursor_is_high && demofly_idle_time > demofly_idle_time_thresh) {
-      if (int(demofly_idle_time) != int(prev_idle_time) && int(demofly_idle_time) % 4 == 0) {
-        static int nskip;
-        if (demofly_mode == 0 && nskip < 1) {
-          nskip++;
-        } else {
-          nskip = 0;
-          float bu_demofly_idle_time = demofly_idle_time;
-          demofly_idle_time = 0.f;
-          KeyPressed(" ");
-          demofly_idle_time = bu_demofly_idle_time;
-        }
-      }
-    }
-    if (1) {
-      if (int(idle_dist) != int(prev_idle_dist) && 1) {
-        turn_rate += (-1.f + 2.f * Random::G.unif()) * .3f;
-        turn_rate = clamp(turn_rate, -1.f, +1.f);
-      }
-    }
-  }
-  if (1) {
-    Frame f = g_obs[0].t();
-    const float tol = 0.023f, min_z = 0.f, max_z = 0.06f;
-    if (f.p()[2] < min_z) f.p()[2] = min_z;
-    if (f.p()[2] > max_z) f.p()[2] = max_z;
-    if (f.p()[0] < 0.f - tol) f.p()[0] = 1.f + tol;
-    if (f.p()[0] > 1.f + tol) f.p()[0] = 0.f - tol;
-    if (f.p()[1] < 0.f - tol) f.p()[1] = 1.f + tol;
-    if (f.p()[1] > 1.f + tol) f.p()[1] = 0.f - tol;
-    g_obs[0].tm() = f;
-  }
-}
-
 static void act_fly() {
-  Vec2<float> yxf;
-  if (viewmode || button_active || !HB::get_pointer(yxf)) yxf = twice(.5f);
-  if (g_g3d_demofly) fly_g3d_demofly(yxf);
-  yxf = max(min(yxf, twice(1.f)), twice(0.f));
-  // convert form (0..1)screen to (-1..1)math
+  Vec2<float> yxf = twice(.5f);
+  if (const auto pointer = HB::get_pointer())
+    if (!viewmode && !button_active) yxf = min(max(*pointer, twice(0.f)), twice(1.f));
+  // Convert from (0..1)screen to (-1..1)math.
   yxf = (2.f * yxf - twice(1.f)) * V(-1.f, 1.f);
   const float a = .1f;
   yxf *= a;
   Frame f1 = Frame::translation(V(ddistance * .05f, 0.f, 0.f));
-  Frame f2 = to_Frame(Quaternion(Vector(0.f, -yxf[0], -yxf[1]), float(mag(yxf))));
+  Frame f2 = to_Frame(Quaternion(Vector(0.f, -yxf[0], -yxf[1]), mag(yxf)));
   Frame f = f1 * f2;
   static const bool g3d_fly_use_frame_speed = getenv_bool("G3D_FLY_USE_FRAME_SPEED");
   assertw(!g3d_fly_use_frame_speed);
@@ -511,16 +383,16 @@ static void act_fly() {
 }
 
 static void act_flight() {
-  Vec2<float> yxf;
-  if (viewmode || button_active || !HB::get_pointer(yxf)) yxf = twice(.5f);
-  yxf = max(min(yxf, twice(1.f)), twice(0.f));
-  // convert form (0..1)screen to (-1..1)math
+  Vec2<float> yxf = twice(.5f);
+  if (const auto pointer = HB::get_pointer())
+    if (!viewmode && !button_active) yxf = min(max(*pointer, twice(0.f)), twice(1.f));
+  // Convert from (0..1)screen to (-1..1)math.
   yxf = (2.f * yxf - twice(1.f)) * V(-1.f, 1.f);
   // following coded adapted from g3dfly.c
   float speed = .7f;
   float fturn = abs(speed) > .1f ? .8f / pow(abs(speed), .7f) : .3f;
   Frame& obframe = g_obs[cob].tm();
-  Vec3<float> ang = frame_to_euler_angles(obframe);
+  Vec3<float> ang = euler_angles_from_frame(obframe);
   {
     Frame f1 = Frame::rotation(0, yxf[1] * fturn * .037f);         // roll
     Frame f2 = Frame::rotation(1, yxf[0] * fturn * .037f);         // pitch
@@ -530,15 +402,14 @@ static void act_flight() {
     obframe = f * obframe;
   }
   {
-    float a = to_deg(ang[2]);
+    float a = deg_from_rad(ang[2]);
     if (abs(a) > 90.f) a = (180.f - abs(a)) * sign(a);
     if (abs(a) > 45.f) a = 45.f * sign(a);
     a = sign(a) * pow(abs(a) / 45.f, .5f);
-    // I found that doing translation*rotation*~translation is incorrect!
-    // It gives rise to a small secondary translation.
-    // I don't know why g3dfly.c doesn't show that bug.
+    // Doing "translation * rotation * ~translation" is incorrect!
+    // It gives rise to a small secondary translation.  It is unclear why g3dfly.c doesn't show that problem.
     Point savep = obframe.p();
-    Frame f1 = Frame::translation(-to_Vector(obframe.p()));
+    Frame f1 = Frame::translation(-obframe.p());
     const float yaw_factor = 0.032f;                                                  // was 0.025f in g3dfly.c
     Frame f2 = Frame::rotation(2, -a * yaw_factor * fturn - yxf[1] * fturn * .004f);  // yaw
     Frame f = f1 * f2;
@@ -671,32 +542,39 @@ static void g3d_ellipse2() {
     obi = i * nlod + obi;
     int nfaces = g_obs[obi].get_mesh()->num_faces();
     Point pabove = Point(0.f, 0.f, obradius * 1.8f) * fellipse;
-    float xo, yo, zo;
-    if (HB::world_to_vdc(pabove, xo, yo, zo)) {
-      yo -= .01f;
-      HB::draw_text(V(yo, xo), sform("%d", nfaces));
+    const auto [zs, xys] = HB::vdc_from_world(pabove);
+    if (xys) {
+      const auto [xs, ys] = *xys;
+      HB::draw_text(V(ys - .01f, xs), sform("%d", nfaces));
     } else {
       SHOW(pabove);
-      SHOW(zo);
+      SHOW(zs);
     }
   }
 }
 
 static void change_frames() {
-  if (flightmode == EFlightmode::fly) {
-    act_fly();
-    if (viewmode && button_active) act_button();
-  } else if (flightmode == EFlightmode::flight) {
-    act_flight();
-    if (viewmode && button_active) act_button();
-  } else if (flightmode == EFlightmode::automatic) {
-    act_auto();
-    if (button_active) act_button();
-  } else if (flightmode == EFlightmode::bobble) {
-    act_bobble();
-    if (button_active) act_button();
-  } else if (button_active) {
-    act_button();
+  switch (flightmode) {
+    case EFlightmode::none:
+      if (button_active) act_button();
+      break;
+    case EFlightmode::fly:
+      act_fly();
+      if (viewmode && button_active) act_button();
+      break;
+    case EFlightmode::flight:
+      act_flight();
+      if (viewmode && button_active) act_button();
+      break;
+    case EFlightmode::automatic:
+      act_auto();
+      if (button_active) act_button();
+      break;
+    case EFlightmode::bobble:
+      act_bobble();
+      if (button_active) act_button();
+      break;
+    default: assertnever("");
   }
   static const bool g3d_michael = getenv_bool("G3D_MICHAEL");
   if (g3d_michael) g3d_michael1();
@@ -720,21 +598,15 @@ static void set_viewing() {
     const float g3d_view_zoom = getenv_float("G3D_VIEW_ZOOM", 0.f);  // 2017-02-21
     if (g3d_view_zoom) vzoom = g3d_view_zoom;                        // was 0.2f
   }
-  if (g_g3d_demofly && obview != 0) vzoom = 0.2f;
   // HB::set_camera(tpos, zoom, tcam, vzoom);
   HB::set_camera(g_obs[0].t(), zoom, tcam, vzoom);
-  if (1 && g_obs.first == 0) {
-    g_obs[0].set_vis(is_view || obview != 0);
-  }
+  if (1 && g_obs.first == 0) g_obs[0].set_vis(is_view || obview != 0);
   if (auto_hither) {
-    Bbox gbb;
+    Bbox<float, 3> gbb;
     Frame tcami = inverse(tcam);
     int firstobn = g_obs.first == 0 && (is_view || obview != 0) ? 0 : 1;
-    for (int obn = firstobn; obn <= g_obs.last; obn++) {
-      Bbox bbox = g_obs[obn].bbox();
-      bbox.transform(g_obs[obn].t() * tcami);
-      gbb.union_with(bbox);
-    }
+    for (int obn = firstobn; obn <= g_obs.last; obn++)
+      gbb.union_with(g_obs[obn].bbox().transform(g_obs[obn].t() * tcami));
     float minx = gbb[0][0];          // could be negative
     if (minx > 0.f) minx *= .9999f;  // for -key ojo on zero-height data.
     float diam = gbb.max_side();
@@ -751,10 +623,11 @@ static void update_segs() {
 
 void ShowInfo() {
   if (info) {
-    Vec3<float> ang = frame_to_euler_angles(g_obs[obview].t());
+    Vec3<float> ang = euler_angles_from_frame(g_obs[obview].t());
     const Point& p = g_obs[obview].t().p();
     string s;
-    s = sform("%2d%c%c%c%c%c%c%c%c%c%c%c%c%s%3d%s", cob,
+    s = sform("%2d%c%c%c%c%c%c%c%c%c%c%c%c%s%3d%s",  //
+              cob,
               (ratemode == ERatemode::position ? 'p'
                : ratemode == ERatemode::move   ? 'm'
                : ratemode == ERatemode::step   ? 's'
@@ -772,8 +645,9 @@ void ShowInfo() {
               editmode ? 'E' : ' ', obview ? '0' + obview : ' ', auto_level ? 'l' : ' ', input ? 'I' : ' ',
               output ? 'O' : ' ', HB::show_info().c_str(), screenrate,
               (info != 2 ? ""
-                         : sform(" [%5.2f] x%12g y%12g z%12g a%+4.0f b%+4.0f p%+4.0f", zoom, p[0], p[1], p[2],
-                                 to_deg(ang[0]), to_deg(ang[1]), to_deg(ang[2]))
+                         : sform(" [%5.2f] x%12g y%12g z%12g a%+4.0f b%+4.0f p%+4.0f",  //
+                                 zoom, p[0], p[1], p[2],                                //
+                                 deg_from_rad(ang[0]), deg_from_rad(ang[1]), deg_from_rad(ang[2]))
                                .c_str()));
     static const bool show_fps = getenv_bool("G3D_SHOW_FPS");
     // if (HB::get_font_dims()[1] > 9 ...)
@@ -789,28 +663,13 @@ void ShowInfo() {
     if (pmesh != opmesh || nfaces != onfaces) {
       opmesh = pmesh;
       onfaces = nfaces;
-      if (1) {
+      if (pmesh->num_vertices() <= 50'000) {  // For speed, only compute on smaller meshes.
         str = mesh_genus_string(*pmesh);
       } else {
         str = sform("vertices=%d faces=%d", pmesh->num_vertices(), pmesh->num_faces());
       }
     }
     HB::draw_row_col_text(V(1, 0), str);
-  }
-  if (info && g_g3d_demofly) {
-    // velocity = 0.05 * ddistance * 10 * fchange  units/frame
-    // fchange = sec / frame
-    // -> velocity = 0.05 * ddistance * 10  units / sec
-    // 1 unit = 10 m * 16384
-    // 1 mach = 1220 km / hour = 338.889 m / sec
-    // -> velocity = 0.05 * ddistance * 10 * (10 * 16384) = ddistance * 81920 m/sec
-    // -> velocity = above / 338.889 = ddistance * 241.73 mach
-    float mach = ddistance * 241.73f;
-    string s = sform("Mach: %.1f (-/=)", mach);
-    HB::draw_row_col_text(V(4, 0), s);
-    int alt = int(g_obs[0].t().p()[2] * 10 * 16384 / 0.3048f);
-    string s2 = sform(" Alt: %d ft", alt);
-    HB::draw_row_col_text(V(5, 0), s2);
   }
 }
 
@@ -827,7 +686,7 @@ static void show_caption() {
 }
 
 static void show_cross() {
-  if (!info || HB::get_font_dims()[1] > 9) return;
+  if (info < 2 || HB::get_font_dims()[1] > 11) return;  // Used to be "> 9".
   float r = .01f;
   HB::draw_segment(V(.5f - r, .5f - r), V(.5f + r, .5f + r));
   HB::draw_segment(V(.5f + r, .5f - r), V(.5f - r, .5f + r));
@@ -843,56 +702,6 @@ static void show_globe() {
     Vec2<float> yx = .5f + V(std::sin(a), std::cos(a)) * .5f * k_globe_radius;
     if (i & 0x1) HB::draw_segment(yxo, yx);
     yxo = yx;
-  }
-}
-
-static void compute_subdivmode() {
-  if (!g_obs[2].visible()) return;
-  const int nsub = getenv_int("G3DNSUB", 2);
-  bool force_recompute = false;
-  if (!smesh || &smesh->orig_mesh() != g_obs[1].get_mesh()) {
-    SHOW("doing mesh refinement");
-    g_obs.last = 2;
-    g_obs[2].update();
-    // g_obs[2].override_mesh(nullptr);  // prevent clear() from deleting the mesh
-    g_obs[2].clear();
-    HB::clear_segment(2);
-    HB::open_segment(2);
-    const GMesh& mesh = *g_obs[1].get_mesh();
-    // Give a rough idea of what the mesh extents will be
-    for (Vertex v : mesh.vertices()) g_obs[2].enter_point(mesh.point(v));
-    HB::close_segment();
-    g_obs[2].update_stats();
-    GMesh& omesh = *g_obs[1].get_mesh();
-    for (Vertex v : omesh.vertices()) omesh.flags(v).flag(SubMesh::vflag_variable) = true;
-    smesh = make_unique<SubMesh>(omesh);
-    smesh->subdivide_n(nsub, 1);
-    g_obs[2].override_mesh(&smesh->mesh());
-    force_recompute = true;
-  }
-  GMesh& mesh0 = smesh->orig_mesh();
-  GMesh& meshn = smesh->mesh();
-  Set<Vertex> v0redo;
-  for (Vertex v : mesh0.vertices()) {
-    if (!mesh0.flags(v).flag(vflag_ok)) v0redo.enter(v);
-  }
-  if (force_recompute || v0redo.num()) meshn.gflags().flag(mflag_ok) = false;
-  if (force_recompute || v0redo.num() > 3) {
-    SHOW("recompute all");
-    for (Vertex vn : meshn.vertices()) {
-      smesh->update_vertex_position(vn);
-      meshn.flags(vn).flag(vflag_ok) = false;
-    }
-  } else {
-    for (Vertex v : v0redo) {
-      for (Vertex vn : meshn.vertices()) {
-        const Combvh& comb = smesh->combination(vn);
-        if (!comb.c[v]) continue;
-        // we could be smarter and displace the vertex if we knew how much v had changed
-        smesh->update_vertex_position(vn);
-        meshn.flags(vn).flag(vflag_ok) = false;
-      }
-    }
   }
 }
 
@@ -946,7 +755,6 @@ void Draw() {
   if (output) WriteOutput();
   set_viewing();
   update_segs();
-  if (subdivmode) compute_subdivmode();
   if (lod_mode) {
     static bool is_init = false;
     if (!is_init) {
@@ -966,11 +774,6 @@ void Draw() {
     cur_needs_redraw = true;
   }
   prev_needed_redraw = cur_needs_redraw;
-}
-
-void ClearSubMesh() {
-  smesh = nullptr;
-  g_obs[2].override_mesh(nullptr);
 }
 
 }  // namespace g3d

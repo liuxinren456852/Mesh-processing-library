@@ -9,9 +9,10 @@
 #include <io.h>  // _setmode()
 #endif
 
+#include <clocale>  // setlocale()
 #include <csignal>  // signal()
-#include <cstring>  // std::strerror
-#include <mutex>    // std::once_flag, std::call_once()
+#include <cstring>  // strerror
+#include <mutex>    // once_flag, call_once()
 #include <new>      // set_new_handler()
 
 #include "Hh.h"
@@ -22,7 +23,7 @@ namespace hh {
 
 namespace {
 
-HH_NORETURN void my_new_handler() { assertnever("new is out of memory"); }
+[[noreturn]] void my_new_handler() { assertnever("new is out of memory"); }
 
 #if defined(_WIN32)
 void possibly_sleep() {
@@ -40,7 +41,7 @@ void possibly_sleep() {
 
 // For SetUnhandledExceptionFilter(my_top_level_exception_filter);
 // Note: This custom filter for unhandled exceptions is not called when running under debugger.
-//  See http://www.debuginfo.com/articles/debugfilters.html
+//  See https://www.debuginfo.com/articles/debugfilters.html
 //  The solution is to enable show_message_box, and attach the debugger to debug.
 //
 // long __stdcall my_top_level_exception_filter(_EXCEPTION_POINTERS* ExceptionInfo) {
@@ -53,12 +54,12 @@ LONG WINAPI my_top_level_exception_filter(EXCEPTION_POINTERS* ExceptionInfo) {
                 "Hh.cpp", MB_OK);
   HH_REFERENCE_LIB("user32.lib");  // MessageBoxA()
 #endif
-  const unsigned int MSFT_CPP_EXCEPT = 0xE06d7363;  // c++ exception
+  const unsigned int MSFT_CPP_EXCEPT = 0xE06d7363;  // C++ exception.
   unsigned ExceptionCode = ExceptionInfo->ExceptionRecord->ExceptionCode;
   if (0) SHOW("have", ExceptionCode);
   switch (ExceptionCode) {
 #define E(x) \
-  case EXCEPTION_##x: std::cerr << "Exception error: " #x "\n"; break
+  case EXCEPTION_##x: std::cerr << "Fatal exception error: " #x "\n"; break
     E(ACCESS_VIOLATION);
     E(DATATYPE_MISALIGNMENT);
     // E(BREAKPOINT);
@@ -85,18 +86,18 @@ LONG WINAPI my_top_level_exception_filter(EXCEPTION_POINTERS* ExceptionInfo) {
     case EXCEPTION_BREAKPOINT:
       // No need to show a message since an assertion error was likely already reported.
       break;
-    case MSFT_CPP_EXCEPT: {  // uncaught c++ exception
+    case MSFT_CPP_EXCEPT: {  // Uncaught C++ exception.
       EXCEPTION_RECORD& er = *ExceptionInfo->ExceptionRecord;
       // If this crashes, it may be best to delay until after show_call_stack() below.
       const std::runtime_error& ex = *reinterpret_cast<std::runtime_error*>(er.ExceptionInformation[1]);
-      std::cerr << "Uncaught c++ exception: " << ex.what() << "\n";
+      std::cerr << "Fatal uncaught C++ exception: " << ex.what() << "\n";
       break;
     }
     default: SHOW("Unrecognized exception code", ExceptionCode);
   }
   if (errno) std::cerr << "possible error: " << std::strerror(errno) << "\n";
   show_possible_win32_error();
-  // want to report assertion errors from C++ standard library (dialog box pops up, and reach here on "Retry")
+  // We want to report assertion errors from C++ standard library (dialog box pops up, and reach here on "Retry").
   if (k_debug && ExceptionCode == EXCEPTION_BREAKPOINT && !IsDebuggerPresent()) {
     std::cerr << "EXCEPTION_BREAKPOINT in Debug version without debugger present\n";
     show_call_stack();
@@ -107,21 +108,21 @@ LONG WINAPI my_top_level_exception_filter(EXCEPTION_POINTERS* ExceptionInfo) {
     }
     exit_immediately(1);
   }
-  if (ExceptionCode != EXCEPTION_BREAKPOINT) {  // otherwise we have already shown the call stack previously
+  if (ExceptionCode != EXCEPTION_BREAKPOINT) {  // Otherwise we have already shown the call stack previously.
     if (1) {
-      // Sometimes does not show any useful information
+      // Sometimes does not show any useful information.
       // Bad case: Filterimage image1.png -filter i -boundaryrule r -resamplemesh 128_mesh2_v1.m -noo
       // This also fails on win32 (32-bit).
       show_call_stack();
     }
   }
   if (!k_debug) exit_immediately(1);
-  return EXCEPTION_CONTINUE_SEARCH;  // or EXCEPTION_EXECUTE_HANDLER, EXCEPTION_CONTINUE_EXECUTION
+  return EXCEPTION_CONTINUE_SEARCH;  // Or EXCEPTION_EXECUTE_HANDLER, EXCEPTION_CONTINUE_EXECUTION.
 }
 
 #endif  // defined(_WIN32)
 
-HH_NORETURN void my_terminate_handler() {
+[[noreturn]] void my_terminate_handler() {
   // The function shall not return and shall terminate the program.
   // Here, trust stderr more than std::cerr.
   if (0) {
@@ -129,15 +130,15 @@ HH_NORETURN void my_terminate_handler() {
     fflush(stderr);
   }
 #if defined(__GNUC__) || defined(__clang__)
-  // http://stackoverflow.com/questions/3774316/c-unhandled-exceptions
-  // http://stackoverflow.com/questions/17258733/how-to-customize-uncaught-exception-termination-behavior
+  // https://stackoverflow.com/questions/3774316/c-unhandled-exceptions
+  // https://stackoverflow.com/questions/17258733/how-to-customize-uncaught-exception-termination-behavior
   // This works on mingw, clang.
-  // On cygwin, my_terminate_handler() is never called (bug).  http://stackoverflow.com/questions/24402412
+  // On cygwin, my_terminate_handler() is never called (bug).  https://stackoverflow.com/questions/24402412
   // On win, SetUnhandledExceptionFilter(my_top_level_exception_filter) is called instead.
   try {
     throw;
   } catch (const std::exception& ex) {
-    fprintf(stderr, "Terminate: Uncaught c++ exception: %s\n", ex.what());
+    fprintf(stderr, "Terminate: Fatal uncaught C++ exception: %s\n", ex.what());
     fflush(stderr);
   } catch (...) {
   }
@@ -147,17 +148,13 @@ HH_NORETURN void my_terminate_handler() {
   assertnever("my_terminate_handler");
 }
 
-HH_NORETURN void my_abort_handler(int signal_num) {
+[[noreturn]] void my_abort_handler(int signal_num) {
   dummy_use(signal_num);
 #if defined(_MSC_VER) || defined(__MINGW32__)
-  if (1) {
-    show_call_stack();
-  }
+  if (1) show_call_stack();
 #endif
 #if defined(_WIN32)
-  if (IsDebuggerPresent()) {
-    DebugBreak();
-  }
+  if (IsDebuggerPresent()) DebugBreak();
   possibly_sleep();
 #else
   bool want_abort = getenv_bool("ASSERT_ABORT") || getenv_bool("ASSERTX_ABORT");
@@ -171,19 +168,19 @@ HH_NORETURN void my_abort_handler(int signal_num) {
 }
 
 // #include <execinfo.h> // backtrace()
-HH_NORETURN void my_signal_handler(int signal_num) {
+[[noreturn]] void my_signal_handler(int signal_num) {
   // Avoid issuing low-level or STDIO.H I/O routines (such as printf and fread).
   // Avoid heap routines or any routine that uses the heap routines (such as malloc, strdup, putenv).
   // Avoid any function that generates a system call (e.g., getcwd(), time()).
-  // exit_immediately(213);  // does not show up at all.
+  // exit_immediately(213);  // Does not show up at all.
   SHOW("my_signal_handler", signal_num);
   if (0) {
-    // http://stackoverflow.com/questions/77005/how-to-generate-a-stacktrace-when-my-gcc-c-app-crashes
-    // unfortunately, cygwin does not have backtrace/execinfo:  http://comments.gmane.org/gmane.os.cygwin/91196
-    // void *ar[10]; size_t size = backtrace(ar, 10);  // get void*'s for all entries on the stack
-    // backtrace_symbols_fd(ar, size, 2);  // print out all the frames to stderr
+    // https://stackoverflow.com/questions/77005/how-to-generate-a-stacktrace-when-my-gcc-c-app-crashes
+    // Unfortunately, cygwin does not have backtrace/execinfo.
+    // void *ar[10]; size_t size = backtrace(ar, 10);  // Get void*'s for all entries on the stack.
+    // backtrace_symbols_fd(ar, size, 2);  // Print out all the frames to std::cerr.
     //
-    // mingw uses the Windows calling stack, so obviously incompatible with libgcc backtrace()
+    // mingw uses the Windows calling stack, so obviously incompatible with libgcc backtrace().
   }
   assertnever("my_signal_handler");
 }
@@ -194,8 +191,8 @@ int __cdecl my_CrtDbgHook(int nReportType, char* szMsg, int* pnRet) {
   std::cerr << "my_CrtDbgHook with no debugger present\n";
   std::cerr << "Failure message: " << szMsg << "\n";
   if (1) {
-    // I used to often get "Segmentation fault" due to corrupt heap,
-    //  but now StackWalker has its own local memory buffer.
+    // Previously we would get "Segmentation fault" due to corrupt heap, but this is resolved now that StackWalker
+    //  has its own local memory buffer.
     show_call_stack();
   }
   std::cerr << "Now after show_call_stack()\n";
@@ -204,20 +201,20 @@ int __cdecl my_CrtDbgHook(int nReportType, char* szMsg, int* pnRet) {
   possibly_sleep();
   if (0) assertnever("my_CrtDbgHook with !IsDebuggerPresent()");
   exit_immediately(1);
-  // return 0;  // commented because exit_immediately() does not return
-  // Return true - {Abort, Retry, Ignore} dialog will *not* be displayed
-  // Return false - {Abort, Retry, Ignore} dialog *will* be displayed
+  // return 0;  // Commented because exit_immediately() does not return.
+  // Return true - {Abort, Retry, Ignore} dialog will *not* be displayed.
+  // Return false - {Abort, Retry, Ignore} dialog *will* be displayed.
 }
 #endif
 
 void assign_my_signal_handler() {
   // using SignalHandlerPointer = void (*)(int);
   // c:/cygwin/usr/include/sys/signal.h
-  // This does not seem to work under CYGWIN
-  // And it does not seem to work under WIN32; cannot catch "Segmentation fault" $status=140
+  // This does not seem to work under CYGWIN.
+  // And it does not seem to work under WIN32; cannot catch "Segmentation fault" $status=140.
   //
-  // The SIGILL, SIGSEGV, and SIGTERM signals are not generated under Windows NT. They are included
-  // for ANSI compatibility. ... you can also explicitly generate these signals by calling raise.
+  // The SIGILL, SIGSEGV, and SIGTERM signals are not generated under Windows NT. They are included for
+  //  ANSI compatibility. ... we can also explicitly generate these signals by calling raise.
   SHOWL;
   // signal(SIGFPE, my_signal_handler);
   signal(SIGILL, my_signal_handler);
@@ -233,14 +230,14 @@ void setup_exception_hooks() {
 #if !defined(HH_NO_EXCEPTION_HOOKS)
   if (getenv_bool("HH_NO_EXCEPTION_HOOKS")) return;
 #if defined(__CYGWIN__)
-  std::set_new_handler(&my_new_handler);  // the default behavior is to throw std::bad_alloc
-                                          // else on Cygwin, no diagnostic is reported (other than nonzero exit code)
+  // The default behavior is to throw std::bad_alloc
+  std::set_new_handler(&my_new_handler);  // Else on Cygwin, no diagnostic is reported (other than nonzero exit code).
 #endif
 #if defined(_MSC_VER)
   if (!IsDebuggerPresent()) {
     // Because the "Just-in-time debugging" no longer seems to work.
-    _CrtSetReportHook2(_CRT_RPTHOOK_INSTALL, my_CrtDbgHook);  // only in Debug
-    dummy_use(&my_CrtDbgHook);                                // otherwise unreferenced in Release
+    _CrtSetReportHook2(_CRT_RPTHOOK_INSTALL, my_CrtDbgHook);  // Only in Debug.
+    dummy_use(my_CrtDbgHook);                                 // Otherwise unreferenced in Release.
   }
 #endif
 #if defined(_WIN32)
@@ -250,8 +247,8 @@ void setup_exception_hooks() {
     // assertx(v == SEM_FAILCRITICALERRORS);  // already default!
     if (1) SetErrorMode(SetErrorMode(0) | SEM_FAILCRITICALERRORS);
     // It is not the default for Windows apps?
-    // Also consider from http://stackoverflow.com/a/467652/1190077 :
-    if (1) SetErrorMode(SetErrorMode(0) | SEM_NOGPFAULTERRORBOX);  // yes, useful e.g. for mingw32
+    // Also consider from https://stackoverflow.com/a/467652 :
+    if (1) SetErrorMode(SetErrorMode(0) | SEM_NOGPFAULTERRORBOX);  // Yes, useful e.g. for mingw32.
   }
   if (1) {
     // LPTOP_LEVEL_EXCEPTION_FILTER WINAPI SetUnhandledExceptionFilter(
@@ -284,9 +281,24 @@ void use_binary_io() {
   assertx(_setmode(0, O_BINARY) >= 0);
   assertx(_setmode(1, O_BINARY) >= 0);
   assertx(_setmode(2, O_BINARY) >= 0);
-  // There is no global variable for default iostream binary mode.
-  // With new iostream, it appears that std::cin, std::cout, std::cerr adjust
-  //  (fortunately) to the settings of stdin, stdout, stderr.
+  // There is no global variable for default iostream binary mode.  With new iostream, it appears that
+  //  std::cin, std::cout, std::cerr adjust (fortunately) to the settings of stdin, stdout, stderr.
+#endif
+}
+
+void set_utf8_locale() {
+#if defined(_WIN32)
+  // Starting in Windows 10 version 1803 (10.0.17134.0), the Universal C Runtime supports using a UTF-8 code page.
+  // The change means that char strings passed to C runtime functions can expect strings in the UTF-8 encoding.
+  // To enable UTF-8 mode, use ".UTF8" as the code page when using setlocale.
+  //
+  // Note that if we use FindFirstFileA() (with WIN32_FIND_DATAA), we do not get UTF8-encoded strings!
+  // The setlocale(LC_ALL, ".UTF8") only applies to the CRT functions, not the Win32 functions.
+  // It works; it allows some changes (not that many) in FileIO.cpp, and one change in Hh_main.cpp.
+  //
+  // A separate problem is that CONFIG=mingw uses a custom CRT which does not support UTF8 (see
+  // https://www.perlmonks.org/?node_id=11153441), so for now we leave this disabled.
+  assertx(setlocale(LC_ALL, ".UTF8"));  // Or "en_US.UTF8".
 #endif
 }
 
@@ -320,11 +332,11 @@ void change_default_io_precision() {
   //
   // See experiments in ~/git/hh_src/test/misc/test_float_discrepancy.cpp
   //
-  // See my answer at http://stackoverflow.com/a/23437425/1190077
+  // See my answer at https://stackoverflow.com/a/23437425
   //  to the question of the precision necessary to exactly save and retrieve floating-point numbers :
   //
   // See the nice detailed discussion in
-  //  http://randomascii.wordpress.com/2012/03/08/float-precisionfrom-zero-to-100-digits-2/
+  //  https://randomascii.wordpress.com/2012/03/08/float-precisionfrom-zero-to-100-digits-2/
   //
   // The short answer is that the minimum precision is the following:
   //
@@ -342,17 +354,16 @@ void change_default_io_precision() {
   //
   // os << defaultfloat << setprecision(std::numeric_limits<T>::max_digits10) << d;  // 9 or 17
   //
-  // I feel that the difference between 8 and 9 digits of precision (mainly for numbers between 1000 and 1023)
-  //  is not worth it.
+  // The difference between 8 and 9 digits of precision (mainly for numbers between 1000 and 1023) is not worth it.
   //
   // See also:
-  //  http://stackoverflow.com/questions/10357192/printf-rounding-behavior-for-doubles
-  //  http://www.exploringbinary.com/inconsistent-rounding-of-printed-floating-point-numbers/
+  //  https://stackoverflow.com/questions/10357192/printf-rounding-behavior-for-doubles
+  //  https://www.exploringbinary.com/inconsistent-rounding-of-printed-floating-point-numbers/
   // Visual C++ uses the round-half-away-from-zero rule,
   //  and gcc (actually, glibc) uses the round-half-to-even rule, also known as bankers' rounding.
   // glibc printf() has been updated to take the current IEEE rounding mode into account. This was done
-  //  in version 2.17; I just tested it on version 2.18. In doing it this way of course,
-  //  round-to-nearest/round-half-away-from-zero is still not an option, so this doesn't help you make its
+  //  in version 2.17.
+  //  round-to-nearest/round-half-away-from-zero is still not an option, so this doesn't help making the
   //  output consistent with other platforms.
   //
   // MinGW gcc uses the Microsoft C runtime, so it's not really going to show any different results than
@@ -362,22 +373,22 @@ void change_default_io_precision() {
 void exercise_errors() {
   SHOWL;
   if (0) {
-    float b = 1.f / float(g_unoptimized_zero);  // silently produces infinity
+    float b = 1.f / float(g_unoptimized_zero);  // Silently produces infinity.
     SHOW(b);
   }
   if (0) {
-    int a = 123456789;
-    int b = a * a;  // silently overflows
+    int a = 123'456'789;
+    int b = a * a;  // Silently overflows.
     SHOW(b);
   }
   if (0) {
-    // *implicit_cast<int*>(nullptr) = 1;  // error: access violation; CYGWIN+release just crashes
+    // *implicit_cast<int*>(nullptr) = 1;  // Error: access violation; CYGWIN+release just crashes.
   }
   if (0) {
     throw 0;  // unhandled exception
   }
   if (0) {
-    int b = 1 / g_unoptimized_zero;  // error: integer division by zero
+    int b = 1 / g_unoptimized_zero;  // Error: integer division by zero.
     SHOW(b);
   }
   exit(0);
@@ -387,6 +398,7 @@ void hh_init_aux() {
   setup_exception_hooks();
   use_standard_exponent_format_in_io();
   use_binary_io();
+  if (0) set_utf8_locale();
   unsynchronize_stream_and_stdio();
   untie_cin_and_cout();
   warn_if_running_debug_version();

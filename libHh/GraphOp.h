@@ -17,11 +17,9 @@ namespace hh {
 
 // Add edges to a graph to make it symmetric.
 template <typename T> void graph_symmetric_closure(Graph<T>& g) {
-  for (const T& v1 : g.vertices()) {
-    for (const T& v2 : g.edges(v1)) {
+  for (const T& v1 : g.vertices())
+    for (const T& v2 : g.edges(v1))
       if (!g.contains(v2, v1)) g.enter(v2, v1);
-    }
-  }
 }
 
 // Given a graph (possibly directed), return vertices in order of increasing graph distance from vs.
@@ -53,31 +51,39 @@ template <typename T, typename Func_dist = float (&)(const T& v1, const T& v2)> 
   Set<T> _set;
 };
 
+// Template deduction guide:
+template <typename T, typename Func_dist> Dijkstra(const Graph<T>* g, T vs, Func_dist fdist) -> Dijkstra<T, Func_dist>;
+
 // *** Kruskal MST
 
-// Given a graph gnew consisting solely of vertices, computes the minimum spanning tree of undirectedg over
-//  the vertices in gnew under the cost metric fdist.  Returns is_connected.
-// Implementation: Kruskal's algorithm, O(e log(e))
-//  (Prim's algorithm is recommended when e=~n^2, see below)
+template <typename T> struct MstResult {
+  Graph<T> tree;
+  bool is_connected;
+};
+
+// Returns [gnew, is_connected] where gnew is the minimum spanning tree of undirectedg under the cost metric fdist.
+// Implementation: Kruskal's algorithm, O(e log(e))  (Prim's algorithm is recommended when e=~n^2, see below.)
 template <typename T, typename Func = float(const T&, const T&)>
-bool graph_mst(const Graph<T>& undirectedg, Func fdist, Graph<T>& gnew) {
+auto graph_mst(const Graph<T>& undirectedg, Func fdist) {
+  MstResult<T> result;
+  Graph<T>& gnew = result.tree;
+  for (const T& v : undirectedg.vertices()) gnew.enter(v);
   int nv = 0, nebefore = 0;
   struct tedge {
     T v1, v2;
     float w;
   };
   Array<tedge> tedges;
-  for (const T& v1 : gnew.vertices()) {
+  for (const T& v1 : undirectedg.vertices()) {
     nv++;
-    ASSERTX(!gnew.out_degree(v1));
     for (const T& v2 : undirectedg.edges(v1)) {
       if (v1 < v2) continue;
-      ASSERTXX(gnew.contains(v2));
       nebefore++;
       tedges.push(tedge{v1, v2, fdist(v1, v2)});
     }
   }
-  sort(tedges, [](const tedge& a, const tedge& b) { return a.w < b.w; });
+  const auto by_increasing_weight = [](const tedge& a, const tedge& b) { return a.w < b.w; };
+  sort(tedges, by_increasing_weight);
   UnionFind<T> uf;
   int neconsidered = 0, neadded = 0;
   for (const tedge& t : tedges) {
@@ -89,17 +95,8 @@ bool graph_mst(const Graph<T>& undirectedg, Func fdist, Graph<T>& gnew) {
     if (neadded == nv - 1) break;
   }
   showf("graph_mst: %d vertices, %d/%d edges considered, %d output\n", nv, neconsidered, nebefore, neadded);
-  return neadded == nv - 1;
-}
-
-// Returns an undirected graph that is the MST of undirectedg, or empty if g is not connected.
-template <typename T, typename Func = float(const T&, const T&)>
-Graph<T> graph_mst(const Graph<T>& undirectedg, Func fdist) {
-  assertx(!undirectedg.empty());
-  Graph<T> gnew;
-  for (const T& v : undirectedg.vertices()) gnew.enter(v);
-  if (!graph_mst(undirectedg, fdist, gnew)) gnew.clear();
-  return gnew;
+  result.is_connected = neadded == nv - 1;
+  return result;
 }
 
 // *** Prim MST
@@ -158,11 +155,10 @@ inline Graph<int> try_emst(float thresh, CArrayView<Point> pa, const PointSpatia
     SpatialSearch<int> ss(&sp, pa[i]);
     for (;;) {
       if (ss.done()) break;
-      float dis2;
-      int j = ss.next(&dis2);
-      if (dis2 > square(thresh)) break;
+      const auto [j, d2] = ss.next();
+      if (d2 > square(thresh)) break;
       if (inset[j]) continue;
-      if (pq.enter_update_if_smaller(j, dis2)) closest[j] = i;
+      if (pq.enter_update_if_smaller(j, d2)) closest[j] = i;
     }
   }
   int nfound = 0;
@@ -193,9 +189,8 @@ inline Graph<int> graph_quick_emst(CArrayView<Point> pa, const PointSpatial<int>
 // Return statistics about graph edge lengths.  If undirected, edges stats are duplicated.
 template <typename T, typename Func = float(const T&, const T&)> Stat graph_edge_stats(const Graph<T>& g, Func fdist) {
   Stat stat;
-  for (const T& v1 : g.vertices()) {
+  for (const T& v1 : g.vertices())
     for (const T& v2 : g.edges(v1)) stat.enter(fdist(v1, v2));
-  }
   return stat;
 }
 
@@ -208,8 +203,7 @@ inline Graph<int> graph_euclidean_k_closest(CArrayView<Point> pa, int kcl, const
   for_int(i, pa.num()) {
     SpatialSearch<int> ss(&sp, pa[i]);
     for_int(nn, kcl + 1) {
-      assertx(!ss.done());
-      int j = ss.next();
+      const int j = ss.next().id;
       if (j == i) continue;
       gnew.enter(i, j);
     }
@@ -236,13 +230,11 @@ template <typename T> class GraphComponent : noncopyable {
     queue.enqueue(*_vcur);
     while (!queue.empty()) {
       T v = queue.dequeue();
-      for (const T& v2 : _g.edges(v)) {
+      for (const T& v2 : _g.edges(v))
         if (_set.add(v2)) queue.enqueue(v2);
-      }
     }
-    for (++_vcur; _vcur != _vend; ++_vcur) {
+    for (++_vcur; _vcur != _vend; ++_vcur)
       if (!_set.contains(*_vcur)) break;
-    }
   }
 
  private:
@@ -256,41 +248,6 @@ template <typename T> int graph_num_components(const Graph<T>& g) {
   int n = 0;
   for (GraphComponent<T> gc(&g); gc; gc.next()) n++;
   return n;
-}
-
-// *** Graph coloring
-
-// Color a graph (heuristically since optimal is NP-hard).
-// Assign colors (starting with 1).  Return number colors assigned.
-template <typename T> int graph_color(const Graph<T>& graph, Map<T, int>& ret_colors) {
-  int num_colors = 0;
-  ret_colors.clear();
-  for (const T& vv : graph) {
-    bool is_new;
-    ret_colors.enter(vv, 0, is_new);
-    if (!is_new) continue;
-    Queue<T> queue;
-    queue.enqueue(vv);
-    while (!queue.empty()) {
-      T v = queue.dequeue();
-      ASSERTXX(ret_colors.get(v) == 0);
-      Set<int> setcol;
-      for (const T& v2 : graph.edges(v)) {
-        bool is_new2;
-        int col2 = ret_colors.enter(v2, 0, is_new2);
-        if (is_new2) {
-          queue.enqueue(v2);
-        } else {
-          if (col2) setcol.enter(col2);
-        }
-      }
-      int col = 1;
-      while (setcol.contains(col)) col++;
-      ret_colors.replace(v, col);
-      if (col > num_colors) num_colors = col;
-    }
-  }
-  return num_colors;
 }
 
 }  // namespace hh

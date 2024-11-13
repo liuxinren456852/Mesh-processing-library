@@ -18,6 +18,7 @@ data\curve1.recon.a3d ^
 data\blob5.meshopt.simplified.m ^
 data\gaudipark.orig.m ^
 data\gaudipark.pm ^
+data\cessna.pm ^
 data\club.pm ^
 data\club.nf1000.m ^
 data\standingblob.geomorphs ^
@@ -34,6 +35,13 @@ data\gcanyon_sq129_b44.l1t.stitched.pm ^
 data\gcanyon_sq129_b44.l2.pm ^
 data\create_terrain_hierarchy.log ^
 data\office.nf200000.mincycles.m ^
+data\bunny.vertexcache.m ^
+data\bunny.sphparam.m ^
+data\octaflat_eg128.uv.sphparam.m ^
+data\bunny.spheresample.remesh.m ^
+data\bunny.spheresample.octaflat.unrotated.normalmap.png ^
+data\bunny.lonlat.unrotated.normalmap.png ^
+data\bunny.split_meridian.pm ^
 data\mechpart.image.bmp ^
 data\mechpart.video.mp4 ^
 data\mechpart.hlr.ps ^

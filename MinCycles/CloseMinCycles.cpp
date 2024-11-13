@@ -15,7 +15,7 @@
 namespace hh {
 
 // TODO:
-// - ability to find dual cycle, so that we can always fill tunnels, e.g. buddha.orig.m
+// - Introduce ability to find dual cycle, so that we can always fill tunnels, e.g. buddha.orig.m .
 
 // History:
 //
@@ -44,7 +44,7 @@ namespace hh {
 //  However, cannot get shortest _Euclidean_ cycle.
 //  Problem is that we require two fronts of visited vertices, and the vertex Voronoi regions corresponding to
 //   these visited vertices no longer encode the search region topology.
-//  So, I instead went with dual-edge "joined" labels during search.
+//  So, we instead went with dual-edge "joined" labels during search.
 //  These labels indicate which Vertex Voronoi regions are joined together.
 //
 //  Note: After finding shortest cycle, we could keep expanding the BFS for a while so as
@@ -107,6 +107,7 @@ Array<Vertex> CloseMinCycles::close_cycle(const CArrayView<Vertex> vao) {
   assertx(vao.num() >= 3);
   // First, create the new vertices by splitting the old ones, creating two mesh boundaries.
   Array<Vertex> van;  // new vertices
+  van.reserve(vao.num());
   for_int(i, vao.num()) {
     // Careful: note the mixed references to arrays vao and van.
     Vertex vo = vao[i];
@@ -123,33 +124,41 @@ Array<Vertex> CloseMinCycles::close_cycle(const CArrayView<Vertex> vao) {
     }
     _mesh.set_point(vn, p);
     _mesh.set_string(vn, _mesh.get_string(vo));
+    // Note that all corner (and their strings) are preserved in split_vertex().
     v_dist(vn) = 0.f;  // any value != BIGFLOAT
     // Note: Vertex vn is not entered into pqvlbsr, because its corresponding old vertex is already there.
     for (Edge e : _mesh.edges(vn)) e_bfsnum(e) = 0;  // e_joined(e) will be initialized shortly
     // On corners and faces, all sacs, strings, and flags are preserved.
   }
-  // Next, fill the two boundaries with center_split().
+  // Next, fill the two boundaries with create_face() and center_split().
   reverse(van);  // Topologically, we must close the ring of new vertices in the opposite direction.
   Vec2<float> sum_dih = twice(0.f);  // sum of edge dihedral angles after closure, to estimate handle vs. tunnel
   for_int(fi, 2) {
-    Face fn = _mesh.create_face(fi == 0 ? vao : van);
+    CArrayView<Vertex> va = fi == 0 ? vao : van;
+    Face fn = _mesh.create_face(va);
+    // We must assign string information to the inner corners if defined on the outer corners.
+    for (Corner c : _mesh.corners(fn)) {
+      Corner c2 = _mesh.ccw_corner(c);  // Arbitrarily choose one of the two adjacent corners.
+      _mesh.set_string(c, _mesh.get_string(c2));
+    }
     Vertex vn = _mesh.center_split_face(fn);
     v_dist(vn) = 0.f;  // any value != BIGFLOAT
-    if (1) {
+    if (_mark_edges_sharp) {
       // For all edges in the two cycles after the closure, label them with the "sharp" attribute.
       for (Face f : _mesh.faces(vn)) {
         Edge e = _mesh.opp_edge(vn, f);
         _mesh.update_string(e, "sharp", "");
       }
+    }
+    if (_mark_faces_filled) {
       // For all faces in the two fans after the closure, label them with the "filled" attribute.
       for (Face f : _mesh.faces(vn)) _mesh.update_string(f, "filled", "");
       // Label the two vertices at the centers of the face fans.
       _mesh.update_string(vn, "filledcenter", "");
     }
     // Clean-up / initialize the edge data.
-    for (Face f : _mesh.faces(vn)) {
-      for (Edge e : _mesh.edges(f)) e_bfsnum(e) = 0;  // e_joined(e) will be initialized shortly
-    }
+    for (Face f : _mesh.faces(vn))
+      for (Edge e : _mesh.edges(f)) e_bfsnum(e) = 0;      // e_joined(e) will be initialized shortly
     for (Vertex v : _mesh.vertices(vn)) v_dist(v) = 0.f;  // any value != BIGFLOAT
     if (1) {  // heuristically characterize as handle/tunnel based on geometric embedding
       for (Face f : _mesh.faces(vn)) {
@@ -162,7 +171,7 @@ Array<Vertex> CloseMinCycles::close_cycle(const CArrayView<Vertex> vao) {
   if (1) {
     float len = 0.f;
     for_int(i, vao.num()) len += _mesh.length(_mesh.edge(vao[i], vao[(i + 1) % vao.num()]));
-    bool is_handle = sum_dih[0] > 0.f;  // else tunnel
+    bool is_handle = sum(sum_dih) > 0.f;  // else tunnel
     showdf("Closing cycle: edges=%-3d length=%-12g is_handle=%d\n", vao.num(), len, is_handle);
     if (verb) showdf(" (dih0=%.1f dih1=%.1f)\n", sum_dih[0], sum_dih[1]);
     if (is_handle)
@@ -175,7 +184,7 @@ Array<Vertex> CloseMinCycles::close_cycle(const CArrayView<Vertex> vao) {
 
 // Given Edge e adjacent to two already BFS-visited vertices, determine if connecting them would form a nonseparating cycle.
 bool CloseMinCycles::would_be_nonseparating_cycle(Edge e12, bool exact) {
-  HH_STIMER(__would_be_nonseparating_cycle);
+  HH_STIMER("__would_be_nonseparating_cycle");
   assertx(v_dist(_mesh.vertex1(e12)) != BIGFLOAT && v_dist(_mesh.vertex2(e12)) != BIGFLOAT);
   assertx(!e_joined(e12));
   e_joined(e12) = true;  // must be undone before function return if the cycle is non-separating
@@ -187,7 +196,7 @@ bool CloseMinCycles::would_be_nonseparating_cycle(Edge e12, bool exact) {
     Vec2<Queue<Corner>> queues;  // initialized with two opposing half-edges
     queues[0].enqueue(_mesh.corner(_mesh.vertex2(e12), _mesh.face1(e12)));
     queues[1].enqueue(_mesh.corner(_mesh.vertex1(e12), _mesh.face2(e12)));
-    static std::atomic<int> g_bfsnum{0};  // thread-safe
+    static std::atomic<int> g_bfsnum{0};  // threadsafe
     int bfsnum = (++g_bfsnum) * 2;
     Vec2<Set<Edge>> sets;  // for slower algorithm
     int count = 0;
@@ -252,9 +261,8 @@ bool CloseMinCycles::would_be_nonseparating_cycle(Edge e12, bool exact) {
       int count = 0;
       Vec2<Array<Edge>> esides;
       for_int(i, 2) {
-        for (Edge e : _mesh.edges(_mesh.face(e12, i))) {
+        for (Edge e : _mesh.edges(_mesh.face(e12, i)))
           if (!e_joined(e)) esides[i].push(e);
-        }
       }
       for_int(i, 2) {
         if (esides[i].num() != 1) continue;
@@ -267,11 +275,9 @@ bool CloseMinCycles::would_be_nonseparating_cycle(Edge e12, bool exact) {
           assertx(v_dist(_mesh.vertex2(ec)) != BIGFLOAT);
           e_joined(ec) = true;
           ++count;
-          for (Face f : _mesh.faces(ec)) {
-            for (Edge e : _mesh.edges(f)) {
+          for (Face f : _mesh.faces(ec))
+            for (Edge e : _mesh.edges(f))
               if (!e_joined(e)) queue.enqueue(e);
-            }
-          }
         }
       }
       HH_SSTAT(Szipper, count);
@@ -284,15 +290,15 @@ bool CloseMinCycles::would_be_nonseparating_cycle(Edge e12, bool exact) {
 // We have reached vertex v1 from vertex v2, both of which have already been visited.
 // Determine if the associated cycle is non-separating (i.e. spans a topological handle).
 // If it is, optionally process the cycle.
-// Return: was_a_nonseparating_cycle.
-bool CloseMinCycles::look_for_cycle(Vertex v1, Vertex v2, bool process, float verify_dist, int& num_edges) {
-  HH_STIMER(__look_for_cycle);
+// If was_a_nonseparating_cycle, return the num_edges.
+std::optional<int> CloseMinCycles::look_for_cycle(Vertex v1, Vertex v2, bool process, float verify_dist) {
+  HH_STIMER("__look_for_cycle");
   if (verb) Warning("Looking for cycle");
   Edge e12 = _mesh.edge(v1, v2);
   assertx(!e_joined(e12));
   if (!would_be_nonseparating_cycle(e12, true)) {
     if (verb) Warning("not a cycle");
-    return false;
+    return {};
   }
   Array<Edge> ecycle;
   {
@@ -307,7 +313,7 @@ bool CloseMinCycles::look_for_cycle(Vertex v1, Vertex v2, bool process, float ve
         v = vn;
       }
     }
-    if (!assertw(epath[1].num())) return false;  // fix 20140911
+    if (!assertw(epath[1].num())) return {};  // fix 2014-09-11
     while (epath[0].last() == epath[1].last()) {
       if (process) Warning("Cycle was not minimal since trimming dart");
       epath[0].sub(1);
@@ -316,13 +322,13 @@ bool CloseMinCycles::look_for_cycle(Vertex v1, Vertex v2, bool process, float ve
     ecycle.push_array(std::move(epath[0]));
     ecycle.push_array(reverse(std::move(epath[1])));
   }
-  num_edges = ecycle.num();
+  const int num_edges = ecycle.num();
   if (process) {
     float len = 0.f;
     for (Edge e : ecycle) len += _mesh.length(e);
     if (0)
-      showdf("Cycle edges=%d length=%g v1d=%g v2d=%g e12=%g\n", ecycle.num(), len, v_dist(v1), v_dist(v2),
-             _mesh.length(e12));
+      showdf("Cycle edges=%d length=%g v1d=%g v2d=%g e12=%g\n",  //
+             ecycle.num(), len, v_dist(v1), v_dist(v2), _mesh.length(e12));
     HH_SSTAT(Scyclene, ecycle.num());
     HH_SSTAT(Scyclelen, len);
     assertw(difference_is_within_relative_eps(len, verify_dist * 2.f, 1e-6f));
@@ -343,25 +349,21 @@ bool CloseMinCycles::look_for_cycle(Vertex v1, Vertex v2, bool process, float ve
     // Re-initialize v_dist() and e_joined() for that portion of the mesh disconnected from vseed.
     flood_reinitialize(van[0]);  // pick any new vertex
   }
-  return true;
+  return {num_edges};
 }
 
 // Find the smallest size cycle containing vertex vseed -- report search radius (BIGFLOAT if no cycle found)
 //   and farthest vertex in cycle from vseed.
 // If parameter "process" is true, modify the mesh to close the cycle.
 // The caller must clean up e_joined() and v_dist() after this function completes.
-void CloseMinCycles::min_cycle_from_vertex(Vertex vseed, bool process, float& search_radius, Vertex& farthest_vertex,
-                                           int& num_edges) {
+auto CloseMinCycles::min_cycle_from_vertex(Vertex vseed, bool process) -> std::optional<MinCycleResult> {
   if (sdebug) {  // verify that previous search has cleanly reinitialized all fields.
     Warning("sdebug");
     for (Edge e : _mesh.edges()) assertx(!e_joined(e));
     for (Vertex v : _mesh.vertices()) assertx(v_dist(v) == BIGFLOAT);
   }
-  search_radius = BIGFLOAT;
-  farthest_vertex = nullptr;
-  num_edges = std::numeric_limits<int>::max();
   Map<Vertex, Vertex> map_vtouch;
-  auto v_vtouch = [&](Vertex v) -> Vertex& { return map_vtouch[v]; };
+  const auto v_vtouch = [&](Vertex v) -> Vertex& { return map_vtouch[v]; };
   // The priority queue on Vertex v contains two types of prioritized events:
   // (1) the BFS/Dijkstra advancing front (priority is Dijkstra path distance from vseed to v)
   //       through sequence of v_vprev(v) relationships.
@@ -383,8 +385,8 @@ void CloseMinCycles::min_cycle_from_vertex(Vertex vseed, bool process, float& se
     float vdist = hpq.min_priority();
     Vertex vnew = hpq.remove_min();
     if (0)
-      showf("pqmin: v=%d lb=%g v_dist(v)=%g v_vprev(v)=%d v_vtouch(v)=%d\n", _mesh.vertex_id(vnew), vdist,
-            v_dist(vnew), v_dist(vnew) == BIGFLOAT ? _mesh.vertex_id(v_vprev(vnew)) : -1,
+      showf("pqmin: v=%d lb=%g v_dist(v)=%g v_vprev(v)=%d v_vtouch(v)=%d\n",  //
+            _mesh.vertex_id(vnew), vdist, v_dist(vnew), v_dist(vnew) == BIGFLOAT ? _mesh.vertex_id(v_vprev(vnew)) : -1,
             v_dist(vnew) != BIGFLOAT ? _mesh.vertex_id(v_vtouch(vnew)) : -1);
     if (v_dist(vnew) != BIGFLOAT) {  // a candidate cycle edge
       if (verb) Warning("Front is touching itself");
@@ -392,11 +394,12 @@ void CloseMinCycles::min_cycle_from_vertex(Vertex vseed, bool process, float& se
         if (verb) Warning("joined in the meantime");
         continue;
       }
-      if (look_for_cycle(vnew, v_vtouch(vnew), process, vdist, num_edges)) {
-        // we have found a cycle; exit from function
-        search_radius = vdist;
-        farthest_vertex = v_vtouch(vnew);
-        break;
+      if (auto result = look_for_cycle(vnew, v_vtouch(vnew), process, vdist)) {
+        // We have found a cycle; exit from function
+        const float search_radius = vdist;
+        Vertex farthest_vertex = v_vtouch(vnew);
+        const int num_edges = *result;
+        return MinCycleResult{search_radius, farthest_vertex, num_edges};
       }
       continue;  // not a non-separating cycle; ignore this event
     }
@@ -409,7 +412,7 @@ void CloseMinCycles::min_cycle_from_vertex(Vertex vseed, bool process, float& se
       ASSERTX(!e_joined(e));
       e_joined(e) = true;
     }
-    // Update unvisited neigbhors using ordinary BFS Dijkstra rules.
+    // Update unvisited neighbors using ordinary BFS Dijkstra rules.
     for (Vertex v : _mesh.vertices(vnew)) {
       if (v_dist(v) != BIGFLOAT) continue;  // already visited
       float elen = dist(_mesh.point(vnew), _mesh.point(v));
@@ -456,6 +459,7 @@ void CloseMinCycles::min_cycle_from_vertex(Vertex vseed, bool process, float& se
       }
     }
   }
+  return {};
 }
 
 // Intuition:
@@ -471,21 +475,17 @@ void CloseMinCycles::min_cycle_from_vertex(Vertex vseed, bool process, float& se
 //  Intuitively, if the BFS covers a large mesh region before finding a cycle, then most of the vertices
 //   in the search region cannot contain small cycles.
 void CloseMinCycles::find_cycles() {
-  HH_TIMER(_find_cycles);
+  HH_TIMER("_find_cycles");
   if (0) {  // debug
     // results in 2 separate components, so not a topological handle
     close_cycle(V(_mesh.id_vertex(50), _mesh.id_vertex(53), _mesh.id_vertex(59), _mesh.id_vertex(49)));
     return;
   }
   if (0) {  // debug
-    float sr;
-    Vertex vfarthest;
-    int num_edges;
-    min_cycle_from_vertex(_mesh.id_vertex(49), true, sr, vfarthest, num_edges);
-    SHOW(sr);
-    for (Vertex v : _mesh.vertices()) {
+    const auto result = min_cycle_from_vertex(_mesh.id_vertex(49), true);
+    SHOW(result->search_radius);
+    for (Vertex v : _mesh.vertices())
       if (v_dist(v) != BIGFLOAT) showf("vdist(%d)=%g\n", _mesh.vertex_id(v), v_dist(v));
-    }
     return;
   }
   HPqueue<Vertex> pqvlbsr;  // lower-bound on search radius for min cycle about vertex
@@ -515,14 +515,12 @@ void CloseMinCycles::find_cycles() {
       break;
     }
     ++iter;
-    float sr;
-    Vertex vfarthest;
-    int num_edges;
-    min_cycle_from_vertex(vseed, false, sr, vfarthest, num_edges);
+    const auto result = min_cycle_from_vertex(vseed, false);
+    const float sr = result ? result->search_radius : BIGFLOAT;
     ubsr = min(ubsr, sr);  // if find a cycle, possibly reduce the upper-bound on the minimal search radius
     if (verb)
-      showf("it=%-4d v=%-7d sr=%-12g nedges=%-4d lb=%-12g ub=%-12g\n", iter, _mesh.vertex_id(vseed), sr,
-            (num_edges == std::numeric_limits<int>::max() ? -1 : num_edges), lbsr, ubsr);
+      showf("it=%-4d v=%-7d sr=%-12g nedges=%-4d lb=%-12g ub=%-12g\n",  //
+            iter, _mesh.vertex_id(vseed), sr, (result ? result->num_edges : -1), lbsr, ubsr);
     if (!(sr * (1.f + 2e-7f) >= lbsr)) {
       SHOW((lbsr - sr) / sr - 1.f);
       assertx(sr >= lbsr);
@@ -565,28 +563,24 @@ void CloseMinCycles::find_cycles() {
         }
       }
       lbsr = pqvlbsr.min_priority();
-      if (!(ubsr >= lbsr)) {
-        SHOW(_mesh.vertex_id(pqvlbsr.min()), lbsr);
-        assertnever("");
-      }
+      if (!(ubsr >= lbsr)) assertnever(SSHOW(_mesh.vertex_id(pqvlbsr.min()), lbsr));
     }
-    if (sr == BIGFLOAT) continue;  // no more cycles in this connected component of the mesh
+    if (!result) continue;  // no more cycles in this connected component of the mesh
     // Process the cycle if its radius is within some fraction of the lower-bound minimal cycle radius lbsr.
     if (sr <= _frac_cycle_length * lbsr) {  // was: "if (sr == lbsr)"
       if (verb) showdf("After %d iter, processing cycle of length %g\n", iter + 1, sr * 2.f);
-      assertx(num_edges < std::numeric_limits<int>::max());
-      if (num_edges > _max_cycle_nedges) {
-        showdf("Stopping because next cycle has %d>%d edges\n", num_edges, _max_cycle_nedges);
+      assertx(result);
+      if (result->num_edges > _max_cycle_nedges) {
+        showdf("Stopping because next cycle has %d>%d edges\n", result->num_edges, _max_cycle_nedges);
         break;
       }
       bool restart_at_farthest = true;  // may improve loop if _frac_cycle_length > 1.f (e.g. holes3.m)
-      if (!assertw(_frac_cycle_length > (1.f + 1e-6f))) restart_at_farthest = false;  // fix 20140911
-      if (restart_at_farthest) vseed = vfarthest;
-      float old_sr = sr;
-      min_cycle_from_vertex(vseed, true, sr, vfarthest, num_edges);
-      assertx(sr <= old_sr * (1.f + 1e-6f));
-      if (!restart_at_farthest) assertx(sr == old_sr);
-      assertw(num_edges <= _max_cycle_nedges);
+      if (!assertw(_frac_cycle_length > (1.f + 1e-6f))) restart_at_farthest = false;  // fix 2014-09-11
+      if (restart_at_farthest) vseed = result->farthest_vertex;
+      const auto result2 = assertx(min_cycle_from_vertex(vseed, true));
+      assertx(result2->search_radius <= sr * (1.f + 1e-6f));
+      if (!restart_at_farthest) assertx(result2->search_radius == sr);
+      assertw(result2->num_edges <= _max_cycle_nedges);
       flood_reinitialize(vseed);  // again re-initialize v_dist() and e_joined()
       if (sdebug) {
         Warning("slow");
@@ -612,14 +606,13 @@ void CloseMinCycles::find_cycles() {
 void CloseMinCycles::compute() {
   assertx(_frac_cycle_length >= 1.f);
   assertx(_cgenus == std::numeric_limits<int>::max());
-  if (!_mesh.num_vertices()) return;
+  if (_mesh.empty()) return;
   Array<Vertex> ar_boundary_centers;
   if (1) {  // deal with mesh boundaries
-    HH_TIMER(_fillholes);
+    HH_TIMER("_fillholes");
     Set<Edge> setbe;
-    for (Edge e : _mesh.edges()) {
+    for (Edge e : _mesh.edges())
       if (_mesh.is_boundary(e)) setbe.enter(e);
-    }
     while (!setbe.empty()) {
       Edge e = setbe.get_one();
       Queue<Edge> queuee = gather_boundary(_mesh, e);
@@ -649,7 +642,7 @@ void CloseMinCycles::compute() {
     e_bfsnum(e) = 0;
   }
   {
-    HH_TIMER(__genus);
+    HH_TIMER("__genus");
     float fgenus = mesh_genus(_mesh);  // somewhat slow implementation
     assertx(fgenus == floor(fgenus));
     _cgenus = int(fgenus);
@@ -657,12 +650,10 @@ void CloseMinCycles::compute() {
   }
   showdf("Starting with mesh of genus %d\n", _cgenus);
   find_cycles();
-  showdf("Closed %d cycles (%d handles and %d tunnels), resulting in mesh of genus %d\n", _tot_handles + _tot_tunnels,
-         _tot_handles, _tot_tunnels, _cgenus);
+  showdf("Closed %d cycles (%d handles and %d tunnels), resulting in mesh of genus %d\n",  //
+         _tot_handles + _tot_tunnels, _tot_handles, _tot_tunnels, _cgenus);
   for (Vertex vnew : ar_boundary_centers) {
-    Array<Face> faces;
-    for (Face f : _mesh.faces(vnew)) faces.push(f);
-    for (Face f : faces) _mesh.destroy_face(f);
+    for (Face f : Array<Face>(_mesh.faces(vnew))) _mesh.destroy_face(f);
     _mesh.destroy_vertex(vnew);
   }
   ASSERTX(_cgenus == int(mesh_genus(_mesh)));

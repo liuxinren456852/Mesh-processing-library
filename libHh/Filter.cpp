@@ -1,7 +1,7 @@
 // -*- C++ -*-  Copyright (c) Microsoft Corporation; see license.txt
 #include "libHh/Filter.h"
 
-#include <mutex>  // std::once_flag, std::call_once()
+#include <mutex>  // once_flag, call_once()
 
 #include "libHh/MathOp.h"  // gaussian()
 
@@ -75,14 +75,14 @@ const LUfactorization g_periodic_omoms_lu_factorization =
 // Filter kernels
 
 inline double sinc_abs(double x) {
-  // Sinc[x]  where here I assume that x >= 0
+  // Sinc[x], but assuming here that x >= 0.
   ASSERTX(x >= 0.);
   return x < 1e-9 ? 1. : std::sin(x) / x;
 }
 
 // normalized sinc function
 inline double sinc_norm_abs(double x) {
-  // SincNorm[x]  where here I assume that x >= 0
+  // SincNorm[x], but assuming here that x >= 0.
   ASSERTX(x >= 0.);
   x *= D_TAU / 2;
   return sinc_abs(x);
@@ -368,7 +368,7 @@ const Filter& Filter::get(const string& name) {
   // Careful: Filter::get() may be called by some static constructor.
   static Array<const Filter*> filters;
   static std::once_flag flag;
-  std::call_once(flag, [] {
+  const auto initialize_filters = [] {
     filters.push(&Filter_impulse::instance());
     filters.push(&Filter_box::instance());
     filters.push(&Filter_triangle::instance());
@@ -384,11 +384,12 @@ const Filter& Filter::get(const string& name) {
     filters.push(&Filter_lanczos6::instance());
     filters.push(&Filter_lanczos10::instance());
     filters.push(&Filter_hamming6::instance());
-  });
+  };
+  std::call_once(flag, initialize_filters);
   assertx(filters.num());
   for (const Filter* filter : filters) {
-    string fname = filter->name();
-    if (fname == name || (name.size() == 1 && name[0] != 'j' && fname[0] == name[0])) return *filter;
+    string filter_name = filter->name();
+    if (filter_name == name || (name.size() == 1 && name[0] != 'j' && filter_name[0] == name[0])) return *filter;
   }
   assertnever("Filter '" + name + "' not recognized");
 }
@@ -451,11 +452,8 @@ void FilterBnd::setup_kernel_weights(int cx, int nx, bool primal, Array<int>& ar
     if (0 && k_debug) {
       bool discontinuous = filter().is_discontinuous();
       double thresh = is_magnify ? (filter().name() == "gaussian" ? .1 : 1e-5) : (discontinuous ? 1. : .2);
-      if (abs(sum - 1.) > thresh) {  // e.g. fails for "quadratic" cx=2 nx=3 x=1
-        SHOW(cx, nx, filter().name(), nk, x, sum);
-        SHOW(mat_weights);
-        assertnever("");
-      }
+      if (abs(sum - 1.) > thresh)  // e.g. fails for "quadratic" cx=2 nx=3 x=1
+        assertnever(SSHOW(cx, nx, filter().name(), nk, x, sum, mat_weights));
     }
     mat_weights[x] /= float(sum);
   }

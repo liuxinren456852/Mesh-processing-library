@@ -47,25 +47,15 @@ template <typename T, int D> class Kdtree : noncopyable {
   const int _maxlevel;  // maximum # of subdivision on each axis
   float _fsize{0.f};    // ok to duplicate if average edge length < _fsize
   struct Entry {
-    Entry() = default;
-    Entry(const T& id) : _id(id) {}
-    Entry(T&& id) noexcept : _id(std::move(id)) {}
-    Entry& operator=(Entry&& e) noexcept {
-      _id = std::move(e._id);
-      _bb = e._bb;
-      return *this;
-    }
     T _id;
-    SGrid<float, 2, D> _bb;  // bounding box on entry
+    SGrid<float, 2, D> _bb{};  // bounding box on entry
   };
   struct Node {
-    Node() = default;
-    Node(int axis, float val) : _axis(axis), _val(val) {}
-    Stack<int> _stackei;  // Entry indices
-    int _l{-1};           // lower-valued subtree
-    int _h{-1};           // higher-valued subtree
-    int _axis;            // 0 .. D - 1
+    int _axis;  // 0 .. D - 1
     float _val;
+    Stack<int> _stackei{};  // Entry indices
+    int _l{-1};             // lower-valued subtree
+    int _h{-1};             // higher-valued subtree
   };
   Array<Entry> _arentry;
   Array<Node> _arnode;
@@ -85,16 +75,16 @@ template <typename T, int D> class Kdtree : noncopyable {
   void rec_depth(int ni, Stat& stat, int depth) const {
     if (ni < 0) return;
     const Node& n = _arnode[ni];
-    stat.enter_multiple(static_cast<float>(depth), n._stackei.height());
+    stat.enter_multiple(float(depth), n._stackei.height());
     rec_depth(n._l, stat, depth + 1);
     rec_depth(n._h, stat, depth + 1);
   }
   void enter_i(const T& id, const Vec<float, D>& bb0, const Vec<float, D>& bb1) {
-    _arentry.push(Entry(id));
+    _arentry.push(Entry{id});
     enter_aux(bb0, bb1);
   }
   void enter_i(T&& id, const Vec<float, D>& bb0, const Vec<float, D>& bb1) {
-    _arentry.push(Entry(std::move(id)));
+    _arentry.push(Entry{std::move(id)});
     enter_aux(bb0, bb1);
   }
   void enter_aux(const Vec<float, D>& bb0, const Vec<float, D>& bb1) {
@@ -116,7 +106,7 @@ template <typename T, int D> class Kdtree : noncopyable {
     const Entry& e = _arentry[ei];
     for (;;) {
       const float val = aval[axis];
-      if (ni == _arnode.num()) _arnode.push(Node(axis, val));
+      if (ni == _arnode.num()) _arnode.push(Node{axis, val});
       if (!axis) {
         if (++level == _maxlevel) break;
         inc *= .5f;
@@ -153,7 +143,7 @@ template <typename T, int D> class Kdtree : noncopyable {
     if (!_arnode.num()) return false;
     int nelemvis = 0;
     bool ret = rec_search(ni, ni, bb0, bb1, cbfunc, nelemvis);
-    if (0) {  // not thread-safe
+    if (0) {  // not threadsafe
       static const bool b_stats = getenv_bool("KD_STATS");
       static Stat SKDsearchnel("SKDsearchnel", b_stats);
       if (b_stats) SKDsearchnel.enter(nelemvis);

@@ -10,13 +10,13 @@
 #if 0
 {
   procedure() {
-    HH_SIMPLE_TIMER(_proc);  // timing for entire procedure
+    SimpleTimer timer1("_proc");  // Timing for entire procedure.
     if (something) {
-      HH_SIMPLE_TIMER(__step1);  // sub-timings for substeps
+      SimpleTimer timer2("__step1");  // Sub-timings for substeps.
       step1();
     }
     if (1) {
-      HH_SIMPLE_TIMER(__step2);
+      SimpleTimer timer3("__step2");
       step2();
     }
     double tot_step2 = 0.;
@@ -34,8 +34,6 @@
 #endif
 
 namespace hh {
-
-#define HH_SIMPLE_TIMER(id) hh::SimpleTimer simple_timer_##id(#id)
 
 class SimpleTimer {
  public:
@@ -55,14 +53,15 @@ class SimpleTimer {
 //----------------------------------------------------------------------------
 
 #if 0 && _MSC_VER >= 1900
-#define HH_USE_HIGH_RESOLUTION_CLOCK  // C++11 (but slightly slower)
+// Standard C++.  However, it is less efficient and less precise than QueryPerformanceCounter() or clock_gettime().
+#define HH_USE_HIGH_RESOLUTION_CLOCK
 #endif
 
 #if defined(HH_USE_HIGH_RESOLUTION_CLOCK)
 #include <chrono>
 #elif defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
-#define NOGDI  // avoid name collision on symbol Polygon
+#define NOGDI         // avoid name collision on symbol Polygon
 #include <Windows.h>  // winbase.h: LARGE_INTEGER, QueryPerformanceCounter, QueryPerformanceFrequency
 #else
 #include <time.h>  // clock_gettime()
@@ -80,7 +79,7 @@ inline int64_t SimpleTimer::get_precise_counter() {
 #else
   struct timespec ti;
   clock_gettime(CLOCK_MONOTONIC, &ti);
-  return int64_t{ti.tv_sec} * (1000 * 1000 * 1000) + ti.tv_nsec;
+  return int64_t{ti.tv_sec} * 1'000'000'000 + ti.tv_nsec;
 #endif
 }
 
@@ -94,7 +93,7 @@ inline double SimpleTimer::get_seconds_per_counter() {
   if (!v) {
     LARGE_INTEGER l;
     QueryPerformanceFrequency(&l);
-    v = 1. / static_cast<double>(l.QuadPart);
+    v = 1. / double(l.QuadPart);
   }
   return v;
 #else

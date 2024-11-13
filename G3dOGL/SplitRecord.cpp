@@ -1,6 +1,7 @@
 // -*- C++ -*-  Copyright (c) Microsoft Corporation; see license.txt
 #include "G3dOGL/SplitRecord.h"
-using namespace hh;
+
+namespace hh {
 
 void SplitRecord::write(std::ostream& os) const {
   os << _vsid << " " << _vtid << "\n";
@@ -66,9 +67,8 @@ void SplitRecord::applySplit(SimplicialComplex& K) {
   Simplex vs = assertx(K.getSimplex(0, _vsid));
   Simplex vt = nullptr;
 
-  Pqueue<Simplex> pq[MAX_DIM + 1];
-  ForSCSimplexStar(vs, spx) { pq[spx->getDim()].enter_unsorted(spx, float(spx->getId())); }
-  EndFor;
+  Pqueue<Simplex> pq[ISimplex::MAX_DIM + 1];
+  for (Simplex spx : vs->get_star()) pq[spx->getDim()].enter_unsorted(spx, float(spx->getId()));
 
   if (0) {
     SimplicialComplex sb;
@@ -95,9 +95,8 @@ void SplitRecord::applySplit(SimplicialComplex& K) {
     vt->setPosition(Point(dp[0] + vsp[0], dp[1] + vsp[1], dp[2] + vsp[2]));
 
     // if vs is at a former midpoint need to update vs as well
-    if (_pos_bit == 0) {  // midpoint
+    if (_pos_bit == 0)  // Midpoint.
       vs->setPosition(Point(vsp[0] - dp[0], vsp[1] - dp[1], vsp[2] - dp[2]));
-    }
 
     if (outcome == SplitRecord::V_NOEDGE && vs->isPrincipal()) {
     }
@@ -165,7 +164,7 @@ void SplitRecord::applySplit(SimplicialComplex& K) {
     assertx(outcome == 7);
     outcome = getNextOutcome();
     if (outcome == SplitRecord::F_VT) {  // map from vs to vt
-      ForSCSimplexChildIndex(f, e, ei) {
+      for (auto [ei, e] : enumerate<int>(f->children())) {
         // vertex opposite to vs
         Simplex voppvs = e->opp_vertex(vs);
         // if such vertex exists, ie if e is not opp_edge(vs)
@@ -177,7 +176,6 @@ void SplitRecord::applySplit(SimplicialComplex& K) {
           newe->addParent(f);
         }
       }
-      EndFor;
     } else if (outcome == SplitRecord::F_VSVT) {
       Simplex splitf = K.createSimplex(2);
       Simplex verts[3];
@@ -213,9 +211,8 @@ void SplitRecord::applyGMSplit(SimplicialComplex& K) {
   Simplex vs = assertx(K.getSimplex(0, _vsid));
   Simplex vt = nullptr;
 
-  Pqueue<Simplex> pq[MAX_DIM + 1];
-  ForSCSimplexStar(vs, spx) { pq[spx->getDim()].enter_unsorted(spx, float(spx->getId())); }
-  EndFor;
+  Pqueue<Simplex> pq[ISimplex::MAX_DIM + 1];
+  for (Simplex spx : vs->get_star()) pq[spx->getDim()].enter_unsorted(spx, float(spx->getId()));
 
   if (0) {
     SimplicialComplex sb;
@@ -244,9 +241,8 @@ void SplitRecord::applyGMSplit(SimplicialComplex& K) {
     vt->setPosition(Point(dp[0] + vsp[0], dp[1] + vsp[1], dp[2] + vsp[2]));
 
     // if vs is at a former midpoint need to update vs as well
-    if (_pos_bit == 0) {  // midpoint
+    if (_pos_bit == 0)  // Midpoint.
       vs->setPosition(Point(vsp[0] - dp[0], vsp[1] - dp[1], vsp[2] - dp[2]));
-    }
 
     if (outcome == SplitRecord::V_NOEDGE && vs->isPrincipal()) {
     }
@@ -314,7 +310,7 @@ void SplitRecord::applyGMSplit(SimplicialComplex& K) {
     assertx(outcome == 7);
     outcome = getNextOutcome();
     if (outcome == SplitRecord::F_VT) {  // map from vs to vt
-      ForSCSimplexChildIndex(f, e, ei) {
+      for (auto [ei, e] : enumerate<int>(f->children())) {
         // vertex opposite to vs
         Simplex voppvs = e->opp_vertex(vs);
         // if such vertex exists, ie if e is not opp_edge(vs)
@@ -326,7 +322,6 @@ void SplitRecord::applyGMSplit(SimplicialComplex& K) {
           newe->addParent(f);
         }
       }
-      EndFor;
     } else if (outcome == SplitRecord::F_VSVT) {
       Simplex splitf = K.createSimplex(2);
       new_facets.push_back(splitf);
@@ -363,9 +358,8 @@ void SplitRecord::applyCmpSplit(SimplicialComplex& K) {
   Simplex vs = assertx(K.getSimplex(0, _vsid));
   Simplex vt = nullptr;
 
-  Pqueue<Simplex> pq[MAX_DIM + 1];
-  ForSCSimplexStar(vs, spx) { pq[spx->getDim()].enter_unsorted(spx, float(spx->getId())); }
-  EndFor;
+  Pqueue<Simplex> pq[ISimplex::MAX_DIM + 1];
+  for (Simplex spx : vs->get_star()) pq[spx->getDim()].enter_unsorted(spx, float(spx->getId()));
 
   if (0) {
     SimplicialComplex sb;
@@ -395,9 +389,8 @@ void SplitRecord::applyCmpSplit(SimplicialComplex& K) {
     vt->setPosition(Point(dp[0] + vsp[0], dp[1] + vsp[1], dp[2] + vsp[2]));
 
     // if vs is at a former midpoint need to update vs as well
-    if (_pos_bit == 0) {  // midpoint
+    if (_pos_bit == 0)  // Midpoint.
       vs->setPosition(Point(vsp[0] - dp[0], vsp[1] - dp[1], vsp[2] - dp[2]));
-    }
 
     if (outcome == SplitRecord::V_NOEDGE && vs->isPrincipal()) {
     }
@@ -468,7 +461,7 @@ void SplitRecord::applyCmpSplit(SimplicialComplex& K) {
     assertx(outcome == 7);
     outcome = getNextOutcome();
     if (outcome == SplitRecord::F_VT) {  // map from vs to vt
-      ForSCSimplexChildIndex(f, e, ei) {
+      for (auto [ei, e] : enumerate<int>(f->children())) {
         // vertex opposite to vs
         Simplex voppvs = e->opp_vertex(vs);
         // if such vertex exists, ie if e is not opp_edge(vs)
@@ -480,7 +473,6 @@ void SplitRecord::applyCmpSplit(SimplicialComplex& K) {
           newe->addParent(f);
         }
       }
-      EndFor;
     } else if (outcome == SplitRecord::F_VSVT) {
       Simplex splitf = K.createSimplex(2);
       new_simplices.push_back(splitf);
@@ -523,3 +515,5 @@ void SplitRecord::applyUnify(SimplicialComplex& K) const {
   K.unify(vs, vt);
   vs->setPosition(new_pos);
 }
+
+}  // namespace hh

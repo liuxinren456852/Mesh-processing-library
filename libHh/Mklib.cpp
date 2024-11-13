@@ -4,7 +4,7 @@
 namespace hh {
 
 #define mk_save hh::MkSave HH_UNIQUE_ID(mksave)(mk)
-#define mk_save_color hh::MkSaveColor HH_UNIQUE_ID(mksavecolor)(mk)
+// #define mk_save_color hh::MkSaveColor HH_UNIQUE_ID(mksavecolor)(mk)
 
 void Mklib::squareO() {
   mk.point(0, -.5f, -.5f);
@@ -94,9 +94,9 @@ void Mklib::polygonU(int n) {
 }
 
 void Mklib::ringU(int n, float h, float r0, float r1, float a0, float a1) {
-  assertx((r0 > 0 || r1 > 0) && r0 >= 0 && r1 >= 0);
+  assertx((r0 > 0.f || r1 > 0.f) && r0 >= 0.f && r1 >= 0.f);
   mk_save;
-  if (r0 <= 0) {
+  if (r0 <= 0.f) {
     mk.translate(0, 0, h);
     mk.rotate(Mk3d::Axis::x, TAU / 2);
     ringU(n, h, r1, r0, -a1, -a0);
@@ -105,7 +105,8 @@ void Mklib::ringU(int n, float h, float r0, float r1, float a0, float a1) {
     float ft4 = std::sin((TAU / 2) / n), ft5 = std::cos((TAU / 2) / n);
     float ft1 = std::tan(a0), ft2 = std::tan(a1);
     mk.scale(r0);
-    auto func_wedge0 = [&](int /*unused*/) {
+    const auto func_wedge0 = [&](int i) {
+      dummy_use(i);
       mk.point(0, ft4, 0);
       if (smooth()) mk.normal(ft5, ft4, ft1);
       mk.point((ft0 - 1) * ft5, ft4 * ft0, ft3);
@@ -131,7 +132,8 @@ void Mklib::flat_ringU(int n, float h, float r0, float r1) {
 }
 
 void Mklib::poly_hole(int n, float r1) {
-  auto func_poly0 = [&](int /*unused*/) {
+  const auto func_poly0 = [&](int i) {
+    dummy_use(i);
     float s = std::sin((TAU / 2) / n), h = std::cos((TAU / 2) / n);
     mk.point(0, s, 0);
     mk.point(-h * (1 - r1), +s * r1, 0);

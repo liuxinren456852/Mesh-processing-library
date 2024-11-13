@@ -18,7 +18,7 @@ namespace hh {
 
 template <typename T> class StridedArrayView;
 
-// CStridedArrayView is like an CArrayView except its elements are separate by a stride (i.e. not necesssarily 1).
+// CStridedArrayView is like an CArrayView except its elements are separate by a stride (i.e. not necessarily 1).
 template <typename T> class CStridedArrayView {
   using type = CStridedArrayView<T>;
 
@@ -32,6 +32,8 @@ template <typename T> class CStridedArrayView {
   bool ok(int i) const { return i >= 0 && i < _n; }
   using value_type = T;
   class iterator {
+    using type = iterator;
+
    public:
     using iterator_category = std::random_access_iterator_tag;
     using value_type = T;
@@ -39,26 +41,26 @@ template <typename T> class CStridedArrayView {
     using pointer = value_type*;
     using reference = value_type&;
     iterator() = default;
-    bool operator==(const iterator& it) const { return _p == it._p; }
-    bool operator!=(const iterator& it) const { return _p != it._p; }
+    bool operator==(const type& rhs) const { return _p == rhs._p; }
+    bool operator!=(const type& rhs) const { return !(*this == rhs); }
     const T& operator*() const { return *_p; }
     const T* operator->() const { return _p; }
-    iterator& operator++() {
+    type& operator++() {
       _p += _stride;
       return *this;
     }
-    iterator& operator--() {
+    type& operator--() {
       _p -= _stride;
       return *this;
     }
-    iterator operator+(std::ptrdiff_t i) { return iterator(_p + i * _stride, _stride); }
-    iterator operator-(std::ptrdiff_t i) { return iterator(_p - i * _stride, _stride); }
+    type operator+(std::ptrdiff_t i) { return type(_p + i * _stride, _stride); }
+    type operator-(std::ptrdiff_t i) { return type(_p - i * _stride, _stride); }
     const T& operator[](std::ptrdiff_t i) const { return _p[i * _stride]; }
-    std::ptrdiff_t operator-(const iterator& it) const {
-      return (ASSERTXX((_p - it._p) % _stride == 0), (_p - it._p) / _stride);
+    std::ptrdiff_t operator-(const type& rhs) const {
+      return (ASSERTXX((_p - rhs._p) % _stride == 0), (_p - rhs._p) / _stride);
     }
-    bool operator<(const iterator& it) const { return (ASSERTXX((_p - it._p) % _stride == 0), _p < it._p); }
-    bool operator<=(const iterator& it) const { return (ASSERTXX((_p - it._p) % _stride == 0), _p <= it._p); }
+    bool operator<(const type& rhs) const { return (ASSERTXX((_p - rhs._p) % _stride == 0), _p < rhs._p); }
+    bool operator<=(const type& rhs) const { return (ASSERTXX((_p - rhs._p) % _stride == 0), _p <= rhs._p); }
 
    private:
     const T* _p;
@@ -79,7 +81,7 @@ template <typename T> class CStridedArrayView {
   type& operator=(const type&) = delete;
 };
 
-// StridedArrayView is like an ArrayView except its elements are separate by a stride (i.e. not necesssarily 1).
+// StridedArrayView is like an ArrayView except its elements are separate by a stride (i.e. not necessarily 1).
 template <typename T> class StridedArrayView : public CStridedArrayView<T> {
   using base = CStridedArrayView<T>;
   using type = StridedArrayView<T>;
@@ -92,6 +94,8 @@ template <typename T> class StridedArrayView : public CStridedArrayView<T> {
   T& last() { return (*this)[_n - 1]; }
   const T& last() const { return base::last(); }
   class iterator {
+    using type = iterator;
+
    public:
     using iterator_category = std::random_access_iterator_tag;
     using value_type = T;
@@ -99,26 +103,26 @@ template <typename T> class StridedArrayView : public CStridedArrayView<T> {
     using pointer = value_type*;
     using reference = value_type&;
     iterator() = default;
-    bool operator==(const iterator& it) const { return _p == it._p; }
-    bool operator!=(const iterator& it) const { return _p != it._p; }
+    bool operator==(const type& rhs) const { return _p == rhs._p; }
+    bool operator!=(const type& rhs) const { return !(*this == rhs); }
     T& operator*() const { return *_p; }
     T* operator->() const { return _p; }
-    iterator& operator++() {
+    type& operator++() {
       _p += _stride;
       return *this;
     }
-    iterator& operator--() {
+    type& operator--() {
       _p -= _stride;
       return *this;
     }
-    iterator operator+(std::ptrdiff_t i) { return iterator(_p + i * _stride, _stride); }
-    iterator operator-(std::ptrdiff_t i) { return iterator(_p - i * _stride, _stride); }
+    type operator+(std::ptrdiff_t i) { return type(_p + i * _stride, _stride); }
+    type operator-(std::ptrdiff_t i) { return type(_p - i * _stride, _stride); }
     T& operator[](std::ptrdiff_t i) const { return _p[i * _stride]; }
-    std::ptrdiff_t operator-(const iterator& it) const {
-      return (ASSERTXX((_p - it._p) % _stride == 0), (_p - it._p) / _stride);
+    std::ptrdiff_t operator-(const type& rhs) const {
+      return (ASSERTXX((_p - rhs._p) % _stride == 0), (_p - rhs._p) / _stride);
     }
-    bool operator<(const iterator& it) const { return (ASSERTXX((_p - it._p) % _stride == 0), _p < it._p); }
-    bool operator<=(const iterator& it) const { return (ASSERTXX((_p - it._p) % _stride == 0), _p <= it._p); }
+    bool operator<(const type& rhs) const { return (ASSERTXX((_p - rhs._p) % _stride == 0), _p < rhs._p); }
+    bool operator<=(const type& rhs) const { return (ASSERTXX((_p - rhs._p) % _stride == 0), _p <= rhs._p); }
 
    private:
     T* _p;
@@ -143,12 +147,12 @@ template <typename T> class StridedArrayView : public CStridedArrayView<T> {
 template <typename T> std::ostream& operator<<(std::ostream& os, CStridedArrayView<T> a) {
   os << "StridedArray<" << type_name<T>() << ">(" << a.num() << ") {\n";
   for_int(i, a.num()) {
-    os << "  " << a[i] << (has_ostream_eol<T>() ? "" : "\n");  // skip linefeed if already printed
+    os << "  " << a[i] << (has_ostream_eol<T>() ? "" : "\n");  // Skip linefeed if already printed.
   }
   return os << "}\n";
 }
 template <typename T> HH_DECLARE_OSTREAM_EOL(CStridedArrayView<T>);
-template <typename T> HH_DECLARE_OSTREAM_EOL(StridedArrayView<T>);  // implemented by CStridedArrayView<T>
+template <typename T> HH_DECLARE_OSTREAM_EOL(StridedArrayView<T>);  // Implemented by CStridedArrayView<T>.
 
 }  // namespace hh
 

@@ -26,7 +26,7 @@ class SGrid : public Vec<typename details::SGrid_sslice<T, d0, od...>::type, d0>
   static constexpr int D = 1 + sizeof...(od);
   static constexpr size_t vol = details::SGrid_vol<d0, od...>::value;
   using type = SGrid<T, d0, od...>;
-  using slice = typename details::SGrid_sslice<T, d0, od...>::type;  // slice as Vec
+  using slice = typename details::SGrid_sslice<T, d0, od...>::type;  // Slice as Vec.
   using base = Vec<slice, d0>;
   using initializer_type = details::nested_initializer_list_t<D, T>;
   using nested_retrieve = details::nested_list_retrieve<D, T>;
@@ -34,9 +34,9 @@ class SGrid : public Vec<typename details::SGrid_sslice<T, d0, od...>::type, d0>
  public:
   SGrid() = default;
   SGrid(const type&) = default;
-  SGrid(initializer_type l) { *this = l; }  // not constexpr, instead use = V(V(), V(), ...)
+  SGrid(initializer_type l) { *this = l; }  // Not constexpr, instead use = V(V(), V(), ...).
   constexpr explicit SGrid(const base& g) : base(g) {}
-  constexpr SGrid(base&& g) : base(std::move(g)) {}  // added move 20140414; ok?
+  constexpr SGrid(base&& g) : base(std::move(g)) {}
   SGrid(CGridView<D, T> g) { *this = g; }
   type& operator=(const type& g) = default;
   type& operator=(initializer_type l) {
@@ -68,8 +68,10 @@ class SGrid : public Vec<typename details::SGrid_sslice<T, d0, od...>::type, d0>
   operator CGridView<D, T>() const { return view(); }
   GridView<D, T> view() { return GridView<D, T>(data(), dims()); }
   CGridView<D, T> view() const { return CGridView<D, T>(data(), dims()); }
+  CGridView<D, T> const_view() const { return CGridView<D, T>(data(), dims()); }
   ArrayView<T> array_view() { return ArrayView<T>(data(), narrow_cast<int>(size())); }
   CArrayView<T> array_view() const { return CArrayView<T>(data(), narrow_cast<int>(size())); }
+  CArrayView<T> const_array_view() const { return CArrayView<T>(data(), narrow_cast<int>(size())); }
   template <int s> SGrid<T, s, od...>& segment(int i) {
     return (ASSERTXX(check(i, s)), *reinterpret_cast<SGrid<T, s, od...>*>(p(i)));
   }
@@ -176,11 +178,12 @@ TT G max(const G& g1, const G& g2) { G g; F { g.flat(i) = max(g1.flat(i), g2.fla
 TT G interp(const G& g1, const G& g2, float f1 = 0.5f) {
   G g; F { g.flat(i) = f1 * g1.flat(i) + (1.f - f1) * g2.flat(i); } return g;
 }
-TT G interp(const G& g1, const G& g2, const G& g3, float f1 = 1.f / 3.f, float f2 = 1.f / 3.f) {
+TT G interp(const G& g1, const G& g2, const G& g3, float f1, float f2) {
   G g; F { g.flat(i) = f1 * g1.flat(i) + f2 * g2.flat(i) + (1.f - f1 - f2) * g3.flat(i); } return g;
 }
+TT G interp(const G& g1, const G& g2, const G& g3) { return interp(g1, g2, g3, 1.f / 3.f, 1.f / 3.f); }
 TT G interp(const G& g1, const G& g2, const G& g3, const Vec3<float>& bary) {
-  // Vec3<float> == Bary;   may have bary[0] + bary[1] + bary[2] != 1.f
+  // Vec3<float> == Bary;   May have sum(bary) != 1.f.
   G g; F { g.flat(i) = bary[0] * g1.flat(i) + bary[1] * g2.flat(i) + bary[2] * g3.flat(i); } return g;
 }
 

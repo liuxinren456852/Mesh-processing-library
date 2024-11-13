@@ -49,7 +49,7 @@ int main() {
     SHOW(grid32);
     grid32 = V(V(0, 1), V(2, 3), V(4, 5));
     SHOW(grid32);
-    SGrid<int, 3, 2> gridn(grid32.view());
+    SGrid<int, 3, 2> gridn(grid32.const_view());
     SHOW(gridn);
     fill(gridn, 0);
     gridn = grid32.view();
@@ -154,7 +154,7 @@ int main() {
   }
   {
 #if 0
-    SGrid<float> grid_no_dimensions;  // it fails to compile, which is correct
+    SGrid<float> grid_no_dimensions;  // It fails to compile, which is correct.
 #endif
   }
 }

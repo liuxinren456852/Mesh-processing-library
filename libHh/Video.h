@@ -10,8 +10,8 @@
 #if 0
 {
   Video video(nframes, V(ysize, xsize)), video2(video.dims()), video3(video.nframes() * 2, video.spatial_dims());
-  Pixel& pix = video(f, y, x);    // as in Image, [y = 0][x = 0] is at upper-left corner of each image frame
-  uint8_t c = video(f, y, x)[z];  // z = [0..2]
+  Pixel& pix = video(f, y, x);    // As in Image, [y = 0][x = 0] is at upper-left corner of each image frame.
+  uint8_t c = video(f, y, x)[z];  // z = [0..2].
 
   // Video read/write is performed using: Windows Media Foundation (mf) or ffmpeg (ffmpeg).
 }
@@ -28,11 +28,12 @@ class Video : public Grid<3, Pixel> {
 
  public:
   struct Attrib;
-  explicit Video(const Vec3<int>& dims = V(0, 0, 0)) { init(dims); }  // nframes, ysize, xsize
+  explicit Video(const Vec3<int>& dims = V(0, 0, 0)) { init(dims); }  // nframes, ysize, xsize.
   explicit Video(int pnframes, const Vec2<int>& sdims) : Video(V(pnframes, sdims[0], sdims[1])) {}
   explicit Video(const Video&) = default;
   explicit Video(const base& video) : base(video.dims()) { base::assign(video); }
-  Video(Video&& v) noexcept { swap(*this, v); }  // = default?
+  explicit Video(const string& filename) { read_file(filename); }
+  Video(Video&& v) noexcept { swap(*this, v); }
   Video(base&& v) noexcept { swap(implicit_cast<base&>(*this), v); }
   ~Video() {}
   Video& operator=(Video&& v) noexcept {
@@ -55,15 +56,15 @@ class Video : public Grid<3, Pixel> {
   int xsize() const { return dim(2); }
   const Attrib& attrib() const { return _attrib; }
   Attrib& attrib() { return _attrib; }
-  void read_file(const string& filename);         // filename may be "-" for std::cin;  may throw std::runtime_error
-  void write_file(const string& filename) const;  // filename may be "-" for std::cout; may throw std::runtime_error
+  void read_file(const string& filename);         // filename may be "-" for std::cin;  may throw std::runtime_error.
+  void write_file(const string& filename) const;  // filename may be "-" for std::cout; may throw std::runtime_error.
 
   // Misc:
   void scale(const Vec2<float>& syx, const Vec2<FilterBnd>& filterbs, const Pixel* bordervalue = nullptr);
   struct Attrib {
-    string suffix;         // e.g. "mp4"; "" if unknown; to identify format of read_file("-") and write_file("-")
-    double framerate{0.};  // frames / sec
-    int bitrate{0};        // bits / sec
+    string suffix;         // e.g. "mp4"; "" if unknown; to identify format of read_file("-") and write_file("-").
+    double framerate{0.};  // frames / sec.
+    int bitrate{0};        // bits / sec.
     Audio audio;
   };
   static string diagnostic_string(const Vec3<int>& dims, const Attrib& attrib);
@@ -85,7 +86,7 @@ class VideoNv12 : noncopyable {
  public:
   VideoNv12() = default;
   explicit VideoNv12(const Vec3<int>& dims) { init(dims); }
-  VideoNv12(VideoNv12&& vnv12) { swap(*this, vnv12); }  // = default?
+  VideoNv12(VideoNv12&& vnv12) { swap(*this, vnv12); }
   VideoNv12& operator=(VideoNv12&& v) noexcept {
     clear();
     swap(*this, v);
@@ -110,12 +111,12 @@ class VideoNv12 : noncopyable {
   GridView<3, Vec2<uint8_t>> get_UV() { return _grid_UV; }
   CGridView<3, Vec2<uint8_t>> get_UV() const { return _grid_UV; }
   void special_reduce_dim0(int i) { _grid_Y.special_reduce_dim0(i), _grid_UV.special_reduce_dim0(i); }
-  void read_file(const string& filename, Video::Attrib* pattrib = nullptr);    // may throw std::runtime_error
-  void write_file(const string& filename, const Video::Attrib& attrib) const;  // may throw std::runtime_error
+  void read_file(const string& filename, Video::Attrib* pattrib = nullptr);    // May throw std::runtime_error.
+  void write_file(const string& filename, const Video::Attrib& attrib) const;  // May throw std::runtime_error.
 
  private:
-  Grid<3, uint8_t> _grid_Y;         // luminance
-  Grid<3, Vec2<uint8_t>> _grid_UV;  // chroma at half the spatial resolution
+  Grid<3, uint8_t> _grid_Y;         // Luminance.
+  Grid<3, Vec2<uint8_t>> _grid_UV;  // Chroma at half the spatial resolution.
   void ok() const { assertx(_grid_Y.dims() == _grid_UV.dims() * V(1, 2, 2)); }
 };
 
@@ -136,8 +137,8 @@ class VideoNv12View {
   CGridView<3, Vec2<uint8_t>> get_UV() const { return _grid_UV; }
 
  private:
-  GridView<3, uint8_t> _grid_Y;         // luminance
-  GridView<3, Vec2<uint8_t>> _grid_UV;  // chroma at half the spatial resolution
+  GridView<3, uint8_t> _grid_Y;         // Luminance
+  GridView<3, Vec2<uint8_t>> _grid_UV;  // Chroma at half the spatial resolution.
 };
 
 // Constant view of an 8-bit luminance grid and a 2*8-bit chroma grid at half spatial resolution.
@@ -155,14 +156,14 @@ class CVideoNv12View {
   CGridView<3, Vec2<uint8_t>> get_UV() const { return _grid_UV; }
 
  private:
-  CGridView<3, uint8_t> _grid_Y;         // luminance
-  CGridView<3, Vec2<uint8_t>> _grid_UV;  // chroma at half the spatial resolution
+  CGridView<3, uint8_t> _grid_Y;         // Luminance.
+  CGridView<3, Vec2<uint8_t>> _grid_UV;  // Chroma at half the spatial resolution.
 };
 
 void convert_VideoNv12_to_Video(CVideoNv12View vnv12, GridView<3, Pixel> video);
 void convert_Video_to_VideoNv12(CGridView<3, Pixel> video, VideoNv12View vnv12);
 
-// &video == &newvideo is OK
+// &video == &newvideo is OK.
 Video scale(const Video& video, const Vec2<float>& syx, const Vec2<FilterBnd>& filterbs,
             const Pixel* bordervalue = nullptr, Video&& newvideo = Video());
 VideoNv12 scale(const VideoNv12& video_nv12, const Vec2<float>& syx, const Vec2<FilterBnd>& filterbs,
@@ -171,27 +172,27 @@ VideoNv12 scale(const VideoNv12& video_nv12, const Vec2<float>& syx, const Vec2<
 // Read a video stream one image frame at a time.  getenv_string("VIDEO_IMPLEMENTATION") may equal "ffmpeg" or "mf".
 class RVideo {
  public:
-  explicit RVideo(string filename, bool use_nv12 = false);  // may throw std::runtime_error
+  explicit RVideo(string filename, bool use_nv12 = false);  // May throw std::runtime_error.
   ~RVideo();
-  const Vec3<int>& dims() const { return _dims; }  // (nframes, ysize, xsize)
+  const Vec3<int>& dims() const { return _dims; }  // (nframes, ysize, xsize).
   const Video::Attrib& attrib() const { return _attrib; }
   int nframes() const { return _dims[0]; }
-  const Vec2<int>& spatial_dims() const { return _dims.tail<2>(); }  // (ysize, xsize)
+  const Vec2<int>& spatial_dims() const { return _dims.tail<2>(); }  // (ysize, xsize).
   int ysize() const { return _dims[1]; }
   int xsize() const { return _dims[2]; }
-  bool read(MatrixView<Pixel> frame);  // frame(ysize(), xsize()); ret: false if EOF
-  bool read(Nv12View frame);           // ret: false if EOF
-  bool discard_frame();                // skip the next frame; ret: success (false if EOF)
+  [[nodiscard]] bool read(MatrixView<Pixel> frame);  // frame(ysize(), xsize()).  Return false if EOF.
+  [[nodiscard]] bool read(Nv12View frame);           // Return false if EOF.
+  [[nodiscard]] bool discard_frame();                // Skip the next frame; Return success (false if EOF).
   class Implementation;
 
  private:
   string _filename;
   bool _use_nv12;
-  Vec3<int> _dims{0, 0, 0};  // nframes, ysize, xsize
+  Vec3<int> _dims{0, 0, 0};  // nframes, ysize, xsize.
   Video::Attrib _attrib;
   unique_ptr<TmpFile> _tmpfile;
   unique_ptr<Implementation> _impl;
-  friend class MF_RVideo_Implementation;
+  friend class Mf_RVideo_Implementation;
   friend class Ffmpeg_RVideo_Implementation;
 };
 
@@ -199,7 +200,7 @@ class RVideo {
 class WVideo {
  public:
   explicit WVideo(string filename, const Vec2<int>& spatial_dims, Video::Attrib attrib,
-                  bool use_nv12 = false);  // dims are (y, x); may throw std::runtime_error
+                  bool use_nv12 = false);  // Dims are (y, x); may throw std::runtime_error.
   ~WVideo();
   const Vec2<int>& spatial_dims() const { return _sdims; }
   int ysize() const { return _sdims[0]; }
@@ -210,13 +211,13 @@ class WVideo {
 
  private:
   string _filename;
-  Vec2<int> _sdims;  // ysize, xsize
+  Vec2<int> _sdims;  // ysize, xsize.
   Video::Attrib _attrib;
   bool _use_nv12;
-  string _pfilename;  // original name if pipe
+  string _pfilename;  // Original name if pipe.
   unique_ptr<TmpFile> _tmpfile;
   unique_ptr<Implementation> _impl;
-  friend class MF_WVideo_Implementation;
+  friend class Mf_WVideo_Implementation;
   friend class Ffmpeg_WVideo_Implementation;
 };
 

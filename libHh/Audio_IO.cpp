@@ -1,7 +1,7 @@
 // -*- C++ -*-  Copyright (c) Microsoft Corporation; see license.txt
 #include "libHh/Audio.h"
 
-#include <mutex>  // std::once_flag, std::call_once()
+#include <mutex>  // once_flag, call_once()
 
 #include "libHh/BinaryIO.h"
 #include "libHh/FileIO.h"
@@ -22,18 +22,18 @@ struct WavHeader {
   uint32_t ChunkSize;
   Vec4<char> Format{'W', 'A', 'V', 'E'};
   Vec4<char> Subcheck1ID{'f', 'm', 't', ' '};
-  uint32_t Subchunk1Size = 16;  // for PCM
-  uint16_t AudioFormat = 3;     // 1 == PCM, 3 == float
+  uint32_t Subchunk1Size{16};  // for PCM
+  uint16_t AudioFormat{3};     // 1 == PCM, 3 == float
   uint16_t NumChannels;
   uint32_t SampleRate;
   uint32_t ByteRate;
   uint16_t BlockAlign;
-  uint16_t BitsPerSample = sizeof(float) * 8;
+  uint16_t BitsPerSample{sizeof(float) * 8};
   Vec4<char> Subchunk2ID{'d', 'a', 't', 'a'};
   uint32_t Subchunk2Size;
 };
 
-static_assert(sizeof(WavHeader) == 44, "");
+static_assert(sizeof(WavHeader) == 44);
 
 }  // namespace
 
@@ -65,10 +65,8 @@ void Audio::read_file(const string& pfilename) {
     if (attrib().suffix == "")
       throw std::runtime_error(
           sform("Peeked audio format (int(c)=%d) in pipe '%s' not recognized", c, filename.c_str()));
-    tmpfile = make_unique<TmpFile>(attrib().suffix);
+    tmpfile = make_unique<TmpFile>(attrib().suffix, fi());
     filename = tmpfile->filename();
-    WFile fi2(filename);
-    fi2() << fi().rdbuf();  // copy the entire stream
   }
   if (!file_exists(filename)) throw std::runtime_error("Audio file '" + filename + "' does not exist");
   attrib().suffix = to_lower(get_path_extension(filename));
@@ -114,51 +112,50 @@ void Audio::read_file(const string& pfilename) {
     if (!ffmpeg_command_exists()) throw std::runtime_error("Cannot find ffmpeg program to read audio content");
     const bool expect_exact_num_samples = attrib().suffix == "wav";
     {  // read header for attributes
-      string scmd = "ffmpeg -nostdin -i " + quote_arg_for_shell(filename) + " -vn -an 2>&1 |";
-      if (ldebug) SHOW(scmd);
-      RFile fi(scmd);
+      string command = "ffmpeg -nostdin -i " + quote_arg_for_shell(filename) + " -vn -an 2>&1 |";
+      if (ldebug) SHOW(command);
+      RFile fi(command);
       double duration = -1.;
       int audio_samplerate = -1;
       double audio_bitrate = -1.;
       int audio_nchannels = -1;
       int nlines = 0;
-      string sline;
+      string line;
       char vch;
-      while (my_getline(fi(), sline, false)) {
+      while (my_getline(fi(), line, false)) {
         nlines++;
-        if (ldebug) SHOW(sline);
-        if (contains(sline, "Could not find option 'nostdin'")) {
+        if (ldebug) SHOW(line);
+        if (contains(line, "Could not find option 'nostdin'")) {
           Warning("Version of external program 'ffmpeg' may be too old");
           continue;
         }
-        if (contains(sline, "Duration:")) {
+        if (contains(line, "Duration:")) {
           //  Duration: 00:00:05.00, start: 0.000000, bitrate: 32842 kb/s  (some mp4 files)
           //  Duration: 00:00:03.02, start: 0.023021, bitrate: 258 kb/s   (mp3; should be 3.0sec)
           //  Duration: 00:00:05.03, bitrate: 100505 kb/s
           //  Duration: N/A, bitrate: N/A  (invalid.mp4)
-          if (contains(sline, "Duration: N/A")) throw std::runtime_error("Invalid audio in file '" + filename + "'");
+          if (contains(line, "Duration: N/A")) throw std::runtime_error("Invalid audio in file '" + filename + "'");
           {
             int vh, vm, vs, vcs;
-            assertx(sscanf(sline.c_str(), " Duration: %d:%d:%d.%d%c", &vh, &vm, &vs, &vcs, &vch) == 5 && vch == ',');
+            assertx(sscanf(line.c_str(), " Duration: %d:%d:%d.%d%c", &vh, &vm, &vs, &vcs, &vch) == 5 && vch == ',');
             duration = vh * 3600. + vm * 60. + vs + vcs * .01;
             if (ldebug) SHOW(vh, vm, vs, vcs, duration);
-            string::size_type i = sline.find(" start: ");
+            string::size_type i = line.find(" start: ");
             if (i != string::npos) {
               double start;
-              if (sscanf(sline.c_str() + i, " start: %d:%d:%d.%d%c", &vh, &vm, &vs, &vcs, &vch) == 5 && vch == ',') {
+              if (sscanf(line.c_str() + i, " start: %d:%d:%d.%d%c", &vh, &vm, &vs, &vcs, &vch) == 5 && vch == ',') {
                 start = vh * 3600. + vm * 60. + vs + vcs * .01;
-              } else if (sscanf(sline.c_str() + i, " start: %lg%c", &start, &vch) == 2 && vch == ',') {
+              } else if (sscanf(line.c_str() + i, " start: %lg%c", &start, &vch) == 2 && vch == ',') {
               } else {
-                SHOW(sline.c_str() + i);
-                assertnever("?");
+                assertnever(SSHOW(line, line.c_str() + i));
               }
               if (ldebug) SHOW(vh, vm, vs, vcs, duration, start, duration - start);
               duration -= start;
-              // It is best not to do explict "-ss 0 -i" as this starts reading before real start.
+              // It is best not to do explicit "-ss 0 -i" as this starts reading before real start.
             }
           }
         }
-        if (contains(sline, "Stream #0:") && contains(sline, ": Audio:") && contains(sline, "kb/s")) {
+        if (contains(line, "Stream #0:") && contains(line, ": Audio:") && contains(line, "kb/s")) {
           // Stream #0:1(eng): Audio: aac (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s (default)
           // Stream #0:1(und): Audio: aac (mp4a / 0x6134706D), 44100 Hz, mono, fltp, 63 kb/s (default)
           // Stream #0:1(eng): Audio: pcm_s16le (sowt / 0x74776F73), 44100 Hz, mono, s16, 705 kb/s (default)
@@ -167,28 +164,28 @@ void Audio::read_file(const string& pfilename) {
           // Stream #0:0(eng): Audio: wmav2 (a[1][0][0] / 0x0161), 44100 Hz, 2 channels, fltp, 96 kb/s
           // Stream #0:1(und): Audio: aac (mp4a / 0x6134706D), 48000 Hz, stereo, fltp (default) -- no audio
           string::size_type i;
-          i = sline.find(" Hz");
+          i = line.find(" Hz");
           assertx(i != string::npos);
           if (audio_samplerate >= 0.) assertnever("Multiple audio streams inside media container");
-          i = sline.rfind(", ", i);
+          i = line.rfind(", ", i);
           assertx(i != string::npos);
-          assertx(sscanf(sline.c_str() + i, ", %d H%c", &audio_samplerate, &vch) == 2 && vch == 'z');
-          if (contains(sline, " mono,"))
+          assertx(sscanf(line.c_str() + i, ", %d H%c", &audio_samplerate, &vch) == 2 && vch == 'z');
+          if (contains(line, " mono,"))
             audio_nchannels = 1;
-          else if (contains(sline, " stereo,"))
+          else if (contains(line, " stereo,"))
             audio_nchannels = 2;
-          i = sline.find(" channels");
+          i = line.find(" channels");
           if (i != string::npos) {
             assertx(audio_nchannels < 0);
-            i = sline.rfind(", ", i);
+            i = line.rfind(", ", i);
             assertx(i != string::npos);
-            assertx(sscanf(sline.c_str() + i, ", %d channel%c", &audio_nchannels, &vch) == 2 && vch == 's');
+            assertx(sscanf(line.c_str() + i, ", %d channel%c", &audio_nchannels, &vch) == 2 && vch == 's');
           }
-          i = sline.find(" kb/s");
+          i = line.find(" kb/s");
           assertx(i != string::npos);
-          i = sline.rfind(", ", i);
+          i = line.rfind(", ", i);
           assertx(i != string::npos);
-          assertx(sscanf(sline.c_str() + i, ", %lg kb/%c", &audio_bitrate, &vch) == 2 && vch == 's');
+          assertx(sscanf(line.c_str() + i, ", %lg kb/%c", &audio_bitrate, &vch) == 2 && vch == 's');
           audio_bitrate *= 1000.;
         }
       }
@@ -207,10 +204,10 @@ void Audio::read_file(const string& pfilename) {
     {  // read data
       if (ldebug) SHOW(diagnostic_string());
       // f32be is Big Endian which is standard network order (also s16be == int16_t and u8be == uint8_t)
-      string scmd = ("ffmpeg -v panic -nostdin -i " + quote_arg_for_shell(filename) + " -f f32be -acodec pcm_f32be" +
-                     sform(" -af atrim=end_sample=%d", nsamples()) + " - |");
-      if (ldebug) SHOW(scmd);
-      RFile fi(scmd);
+      string command = ("ffmpeg -v panic -nostdin -i " + quote_arg_for_shell(filename) +
+                        " -f f32be -acodec pcm_f32be" + sform(" -af atrim=end_sample=%d", nsamples()) + " - |");
+      if (ldebug) SHOW(command);
+      RFile fi(command);
       int nread = 0;
       Array<value_type> sample(nchannels());
       for_int(i, nsamples()) {
@@ -244,7 +241,7 @@ void Audio::write_file(const string& pfilename) const {
   assertx(attrib().samplerate);
   if (!attrib().bitrate) {
     Warning("Setting a high audio bitrate");
-    const_cast<Audio&>(*this).attrib().bitrate = 256 * 1000;  // mutable
+    const_cast<Audio&>(*this).attrib().bitrate = 256'000;  // mutable
   }
   if (attrib().suffix == "")
     const_cast<Audio&>(*this).attrib().suffix = to_lower(get_path_extension(filename));  // mutable
@@ -287,16 +284,16 @@ void Audio::write_file(const string& pfilename) const {
 #if defined(HH_AUDIO_HAVE_FFMPEG)
     if (!ffmpeg_command_exists()) throw std::runtime_error("Cannot find ffmpeg program to write audio content");
     {
-      string scodec;
+      string codec;
       if (attrib().suffix == "wav") {
-        if (0) scodec = " -acodec pcm_s16le";  // ffmpeg default int16_t encoding for *.wav container
-        if (1) scodec = " -acodec pcm_f32le";  // lossless float representation
+        if (0) codec = " -acodec pcm_s16le";  // ffmpeg default int16_t encoding for *.wav container
+        if (1) codec = " -acodec pcm_f32le";  // lossless float representation
       }
-      string scmd = ("| ffmpeg -v panic -f f32be" +
-                     sform(" -ar %g -ac %d -i - -ab %d", attrib().samplerate, nchannels(), attrib().bitrate) + scodec +
-                     " -y " + quote_arg_for_shell(filename));
-      if (ldebug) SHOW(scmd);
-      WFile fi(scmd);
+      string command = ("| ffmpeg -v panic -f f32be" +
+                        sform(" -ar %g -ac %d -i - -ab %d", attrib().samplerate, nchannels(), attrib().bitrate) +
+                        codec + " -y " + quote_arg_for_shell(filename));
+      if (ldebug) SHOW(command);
+      WFile fi(command);
       if (!write_binary_std(fi(), transpose(*this).array_view()))
         throw std::runtime_error("Failed to write audio data");
     }
@@ -304,11 +301,7 @@ void Audio::write_file(const string& pfilename) const {
     throw std::runtime_error("Audio write is not implemented");
 #endif
   }
-  if (tmpfile) {
-    WFile fi(pfilename);
-    RFile fi2(filename);
-    fi() << fi2().rdbuf();  // copy the entire stream
-  }
+  if (tmpfile) tmpfile->write_to(WFile{pfilename}());
 }
 
 }  // namespace hh

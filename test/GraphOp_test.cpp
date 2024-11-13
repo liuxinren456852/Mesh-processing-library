@@ -47,10 +47,11 @@ void do_ints() {
   // SHOW(Array<int>(g.vertices().begin(), g.vertices().end()).sort());
   int vs = 2;
   {
-    Dijkstra<int, fdist> di(&g, vs);
-    // Dijkstra<int> di(&g, vs, ffdist);  // works too
-    // auto func_fdist = [&](const int& v1, const int& v2) { return float(abs(v1-v2)); };
-    // Dijkstra<int, decltype(func_fdist)> di(g, vs, func_fdist);  // works too
+    Dijkstra di(&g, vs, fdist());
+    // Dijkstra<int, fdist> di(&g, vs);  // works too
+    // Dijkstra di(&g, vs, ffdist);  // works too
+    // const auto func_fdist = [&](const int& v1, const int& v2) { return float(abs(v1 - v2)); };
+    // Dijkstra di(&g, vs, func_fdist);  // works too
     for (;;) {
       if (di.done()) break;
       float dis;
@@ -58,45 +59,47 @@ void do_ints() {
       showf("%d at dist=%g\n", v, dis);
     }
   }
-  {
-    Stat stat = graph_edge_stats(g, fdist());
-    stat.set_name("plain_graph");
-    SHOW(stat);
-  }
+  SHOW(graph_edge_stats(g, fdist()));
   SHOW(graph_num_components(g));
   // graph_symmetric_closure(g);
   SHOW("symclosure:");
   show_graph(g, true);
-  auto gmst = graph_mst(g, fdist());
-  show_graph(gmst);
+  {
+    auto [gmst, is_connected] = graph_mst(g, fdist());
+    assertx(is_connected);
+    show_graph(gmst);
+  }
   g.enter_undirected(5, 6);
-  gmst = graph_mst(g, fdist());
-  show_graph(gmst);
-  g.enter(8);
-  g.enter(9);
-  g.enter(10);
-  g.enter_undirected(10, 8);
-  g.enter_undirected(8, 9);
-  SHOW(graph_num_components(g));
-  g.enter_undirected(9, 7);
-  SHOW(graph_num_components(g));
-  // EMST of 7 points 0..6 on the Real line (easy)
-  gmst = graph_mst(7, fidist());
-  show_graph(gmst);
+  {
+    auto [gmst, is_connected] = graph_mst(g, fdist());
+    assertx(is_connected);
+    show_graph(gmst);
+    g.enter(8);
+    g.enter(9);
+    g.enter(10);
+    g.enter_undirected(10, 8);
+    g.enter_undirected(8, 9);
+    SHOW(graph_num_components(g));
+    g.enter_undirected(9, 7);
+    SHOW(graph_num_components(g));
+    // EMST of 7 points 0..6 on the Real line (easy)
+    gmst = graph_mst(7, fidist());
+    show_graph(gmst);
+  }
 }
 
 void do_points() {
   SHOW("do_points");
   Vec<Point, 20> pa;
-  PointSpatial<int> psp(10);
+  PointSpatial<int> spatial(10);
   for_int(i, 10) {
     pa[i] = Point(.1f, .1f, .1f) + Vector(.3f, .2f, .1f) * (i * .2f);
     pa[i + 10] = Point(.12f, .1f, .1f) + Vector(.2f, .32f, .12f) * (i * .2f);
   }
-  for_int(i, 20) psp.enter(i, &pa[i]);
-  auto gmst = graph_quick_emst(pa, psp);
+  for_int(i, 20) spatial.enter(i, &pa[i]);
+  auto gmst = graph_quick_emst(pa, spatial);
   show_graph(gmst);
-  auto gkcl = graph_euclidean_k_closest(pa, 5, psp);
+  auto gkcl = graph_euclidean_k_closest(pa, 5, spatial);
   show_graph(gkcl, true);
 }
 

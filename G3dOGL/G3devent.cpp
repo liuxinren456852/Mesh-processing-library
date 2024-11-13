@@ -1,5 +1,5 @@
 // -*- C++ -*-  Copyright (c) Microsoft Corporation; see license.txt
-#include <cctype>  // std::isdigit()
+#include <cctype>  // isdigit()
 
 #include "G3dOGL/G3d.h"
 #include "libHh/FileIO.h"
@@ -12,37 +12,24 @@
 #include "libHh/StringOp.h"
 using namespace hh;
 
-extern float ambient;  // access from G3dOGL
-
 namespace g3d {
-
-int demofly_mode = 0;
-float demofly_idle_time = 0.f;
-float demofly_idle_time_thresh = 17.f;
 
 namespace {
 
 bool keylock;
 
-const bool b_g3d_demofly = getenv_bool("G3D_DEMOFLY");
-
-void press_keys(const string& str) {
-  for (char ch : str) KeyPressed(string(1, ch));
-}
-
 void save_state() {
   ExpandStateFilename();
   try {
     WFile fi(statefile);  // may throw
-    Frame ft;
-    FrameIO::create_not_a_frame(ft);
+    Frame ft = FrameIO::get_not_a_frame();
     for (int i = 0; i <= g_obs.last; i++) {
       bool is_vis = g_obs[i].visible() || (g_obs.first == 1 && i == 0);
       const Frame& f = is_vis ? g_obs[i].t() : ft;
       if (i && f.is_ident()) continue;
-      assertw(FrameIO::write(fi(), f, i, (!i ? zoom : 0.f), false));
+      assertw(FrameIO::write(fi(), ObjectFrame{f, i, (!i ? zoom : 0.f)}));
     }
-    if (!tview.is_ident()) assertw(FrameIO::write(fi(), tview, -1, 0.f, false));
+    if (!tview.is_ident()) assertw(FrameIO::write(fi(), ObjectFrame{tview, -1}));
     assertw(fi());
   } catch (const std::runtime_error& ex) {
     SHOW("Cannot save to '" + statefile + "' : " + ex.what());
@@ -53,21 +40,18 @@ void read_state() {
   ExpandStateFilename();
   try {
     RFile fi(statefile);  // may throw
-    string sline;
+    string line;
     while (fi().peek() >= 0) {
       if (fi().peek() == '#') {
-        assertx(my_getline(fi(), sline));
+        assertx(my_getline(fi(), line));
         continue;
       }
-      Frame f;
-      int obn;
-      float z;
-      bool bin;
-      if (!assertw(FrameIO::read(fi(), f, obn, z, bin))) break;
-      if (obn == -1) {
-        tview = f;
+      const auto object_frame = assertw(FrameIO::read(fi()));
+      if (!object_frame) break;
+      if (object_frame->obn == -1) {
+        tview = object_frame->frame;
       } else {
-        UpdateFrame(obn, f, z);
+        UpdateFrame(*object_frame);
       }
     }
   } catch (const std::runtime_error& ex) {
@@ -120,10 +104,6 @@ void reset_hither_yonder() {
 }
 
 void all_reset() {
-  if (b_g3d_demofly) {
-    demofly_idle_time = 0.f;
-    while (demofly_mode) KeyPressed(" ");
-  }
   for (int i = 0; i <= g_obs.last; i++) g_obs[i].tm() = Frame::identity();
   tview = Frame::identity();
   cob = 1;
@@ -141,7 +121,7 @@ void all_reset() {
   mode_centroid = true;
   output = false;
   keylock = false;
-  if (!b_g3d_demofly) reset_hither_yonder();
+  reset_hither_yonder();
   obview = 0;
   for (int i = g_obs.first; i <= g_obs.last; i++) {
     g_obs[i].set_vis(true);
@@ -153,20 +133,11 @@ void all_reset() {
   geomorph = true;
   timingtest_nframes = 0;
   assertw(HB::special_keypress('Z'));
-  if (b_g3d_demofly) {
-    press_keys(",eoDe0------lDtDrDbDrDb");
-    zoom = .79f;
-    auto_hither = false;
-    HB::set_hither(.0001f);
-    HB::set_yonder(0.f);
-    // ambient = .7f;
-  }
 }
 
 // turn viewing direction toward world point (zeroes the roll)
 void aim_towards(const Point& p) { frame_aim_at(g_obs[obview].tm(), p - g_obs[obview].t().p()); }
 
-#if 0
 void enter_aim() {
   int obn = cob != obview ? cob : 1;
   Point paim = g_obs[obn].center() * g_obs[obn].t();
@@ -184,18 +155,18 @@ void enter_aim() {
   frame *= to_Frame(rot);
   frame.p() = pt;
 }
-#endif
 
 void rotate_around() { Applyq(Frame::rotation(2, TAU / 2)); }
 
 // (area is determ / 2)
-float determ2d(const Point& p1, const Point& p2, const Point& p3) {
-  return (p1[0] * p2[1] - p1[1] * p2[0] + p2[0] * p3[1] - p2[1] * p3[0] + p3[0] * p1[1] - p3[1] * p1[0]);
+float determ2d(const Vec2<float>& p1, const Vec2<float>& p2, const Vec2<float>& p3) {
+  return p1[0] * p2[1] - p1[1] * p2[0] + p2[0] * p3[1] - p2[1] * p3[0] + p3[0] * p1[1] - p3[1] * p1[0];
 }
 
-bool select_vertex(const Vec2<float>& yx, int& ret_obn, GMesh*& ret_mesh, Vertex& ret_v) {
+std::optional<SelectedVertex> select_vertex(const Vec2<float>& yx) {
+  std::optional<SelectedVertex> selected_vertex;
+  const Vec2<float> ps = yx.rev();
   Vec2<int> win_dims = HB::get_extents();
-  ret_v = nullptr;
   // must be this close (4 pixel radius)
   // for all vertices in that range, pick closest one
   // select first object for which this is true
@@ -206,24 +177,23 @@ bool select_vertex(const Vec2<float>& yx, int& ret_obn, GMesh*& ret_mesh, Vertex
     GMesh& mesh = *g_obs[obn].get_mesh();
     for (Vertex v : mesh.vertices()) {
       Point p = mesh.point(v) * g_obs[obn].t();
-      float xp, yp, zp;
-      HB::world_to_vdc(p, xp, yp, zp);
-      float d = abs(xp - yx[1]) + abs(yp - yx[0]);
-      if (d > maxd || zp > minz) continue;
-      minz = zp;
-      ret_obn = obn;
-      ret_mesh = &mesh;
-      ret_v = v;
+      const auto [zs, xys] = HB::vdc_from_world(p);
+      if (xys) {
+        const auto [xs, ys] = *xys;
+        const float d = abs(xs - ps[0]) + abs(ys - ps[1]);
+        if (d <= maxd && zs <= minz) {
+          minz = zs;
+          selected_vertex = {obn, &mesh, v};
+        }
+      }
     }
-    if (ret_v) break;
-    if (subdivmode && obn == 1) break;  // no more objects
   }
-  return !!ret_v;
+  return selected_vertex;
 }
 
-bool select_edge(const Vec2<float>& yx, int& ret_obn, GMesh*& ret_mesh, Edge& ret_e, Point& ret_inter) {
+std::optional<SelectedEdge> select_edge(const Vec2<float>& yx) {
+  std::optional<SelectedEdge> selected_edge;
   Vec2<int> win_dims = HB::get_extents();
-  ret_e = nullptr;
   // must be this close (3 pixels)
   // for all vertices in that range, pick closest one
   // select first object for which this is true
@@ -237,13 +207,13 @@ bool select_edge(const Vec2<float>& yx, int& ret_obn, GMesh*& ret_mesh, Edge& re
     for (Edge e : mesh.edges()) {
       Vertex v1 = mesh.vertex1(e), v2 = mesh.vertex2(e);
       Point p1 = mesh.point(v1), p2 = mesh.point(v2);
-      Point ps1(0.f, 0.f, 0.f), ps2(0.f, 0.f, 0.f), ps(concat(yx.rev(), V(0.f)));
-      float zs1, zs2;
-      if (!HB::world_to_vdc(p1 * t, ps1[0], ps1[1], zs1)) continue;
-      if (!HB::world_to_vdc(p2 * t, ps2[0], ps2[1], zs2)) continue;
-      Vector vd = ok_normalized(ps2 - ps1);
-      float a = clamp(dot(vd, ps - ps1) / mag(ps2 - ps1), 0.f, 1.f);
-      float d = dist(ps, interp(ps2, ps1, a));
+      const auto [zs1, xys1] = HB::vdc_from_world(p1 * t);
+      const auto [zs2, xys2] = HB::vdc_from_world(p2 * t);
+      if (!xys1 || !xys2) continue;
+      const auto xys = yx.rev();
+      const Vec2<float> vd = ok_normalized(*xys2 - *xys1);
+      float a = clamp(dot(vd, xys - *xys1) / mag(*xys2 - *xys1), 0.f, 1.f);
+      float d = dist(xys, interp(*xys2, *xys1, a));
       float z = max(zs1, zs2);
       if (d > maxd || z > minz) continue;
       float minzsn = BIGFLOAT;
@@ -251,25 +221,21 @@ bool select_edge(const Vec2<float>& yx, int& ret_obn, GMesh*& ret_mesh, Edge& re
         Polygon poly;
         mesh.polygon(f, poly);
         Point pn = p1 + poly.get_normal_dir();
-        float xs, ys, zs;
-        HB::world_to_vdc(pn * t, xs, ys, zs);
+        const auto [zs, _] = HB::vdc_from_world(pn * t);
         minzsn = min(minzsn, zs);
       }
       if (minzsn > zs1 && prune_backfacing) continue;
       minz = z;
-      ret_obn = obn;
-      ret_mesh = &mesh;
-      ret_e = e;
-      ret_inter = interp(p2, p1, a);  // not correct for perspective!
+      const Point inter = interp(p2, p1, a);  // Not correct for perspective!
+      selected_edge = {obn, &mesh, e, inter};
     }
-    if (ret_e) break;
-    if (subdivmode && obn == 1) break;  // no more objects
   }
-  return !!ret_e;
+  return selected_edge;
 }
 
-bool select_face(const Vec2<float>& yx, int& ret_obn, GMesh*& ret_mesh, Face& ret_f) {
-  ret_f = nullptr;
+std::optional<SelectedFace> select_face(const Vec2<float>& yx) {
+  std::optional<SelectedFace> selected_face;
+  const Vec2<float> ps = yx.rev();
   float minz = BIGFLOAT;
   for (int obn = g_obs.first; obn <= g_obs.last; obn++) {
     if (!g_obs[obn].visible()) continue;
@@ -278,166 +244,132 @@ bool select_face(const Vec2<float>& yx, int& ret_obn, GMesh*& ret_mesh, Face& re
     Array<Vertex> va;
     for (Face f : mesh.faces()) {
       mesh.get_vertices(f, va);
-      for_int(vi, va.num() - 2) {  // for non-triangles, create fan.
-        Vec3<Point> pa;
-        pa[0] = mesh.point(va[0]);
-        pa[1] = mesh.point(va[vi + 1]);
-        pa[2] = mesh.point(va[vi + 2]);
-        Vec3<Point> psa;
+      for_int(vi, va.num() - 2) {  // For non-triangles, create fan.
+        const Vec3<Point> triangle{mesh.point(va[0]), mesh.point(va[vi + 1]), mesh.point(va[vi + 2])};
+        Vec3<Vec2<float>> psa;
         Vec3<float> psz, areas;
         bool all_in = true;
         for_int(i, 3) {
-          psa[i] = Point(0.f, 0.f, 0.f);
-          if (!HB::world_to_vdc(pa[i] * t, psa[i][0], psa[i][1], psz[i])) {
+          const auto [zs, xys] = HB::vdc_from_world(triangle[i] * t);
+          if (xys) {
+            psz[i] = zs;
+            psa[i] = *xys;
+          } else {
             all_in = false;
             break;
           }
         }
         if (!all_in) continue;
-        Point ps(concat(yx.rev(), V(0.f)));
         for_int(i, 3) areas[i] = determ2d(psa[mod3(i + 1)], psa[i], ps) * .5f;
-        if (areas[0] < 0 || areas[1] < 0 || areas[2] < 0) continue;
-        float z = max({psz[0], psz[1], psz[2]});
+        if (areas[0] < 0.f || areas[1] < 0.f || areas[2] < 0.f) continue;
+        float z = max(psz);
         if (z > minz) continue;
         minz = z;
-        ret_obn = obn;
-        ret_mesh = &mesh;
-        ret_f = f;
+        selected_face = {obn, &mesh, f};
       }
     }
-    if (ret_f) break;
-    if (subdivmode && obn == 1) break;  // no more objects
   }
-  return !!ret_f;
+  return selected_face;
 }
 
 void swap_edge() {
-  Vec2<float> yx;
-  if (!HB::get_pointer(yx)) {
-    HB::beep();
-    return;
+  if (auto pointer = HB::get_pointer()) {
+    const Vec2<float> yx = *pointer;
+    if (const auto selected_edge = select_edge(yx)) {
+      const auto [_, mesh, e, unused] = *selected_edge;
+      if (mesh->legal_edge_swap(e)) {
+        Edge enew = mesh->swap_edge(e);
+        dummy_use(enew);
+        mesh->gflags().flag(mflag_ok) = false;
+        HB::redraw_later();
+        return;
+      }
+    }
   }
-  int obn;
-  GMesh* mesh;
-  Edge e;
-  Point pint;
-  if (!select_edge(yx, obn, mesh, e, pint)) {
-    HB::beep();
-    return;
-  }
-  if (!mesh->legal_edge_swap(e)) {
-    HB::beep();
-    return;
-  }
-  Edge enew = mesh->swap_edge(e);
-  mesh->gflags().flag(mflag_ok) = false;
-  for (Face f : mesh->faces(enew)) {
-    for (Vertex v : mesh->vertices(f)) mesh->flags(v).flag(vflag_ok) = false;
-  }
-  if (subdivmode) ClearSubMesh();
-  HB::redraw_later();
+  HB::beep();
 }
 
 void split_edge() {
-  Vec2<float> yx;
-  if (!HB::get_pointer(yx)) {
-    HB::beep();
-    return;
+  if (auto pointer = HB::get_pointer()) {
+    const Vec2<float> yx = *pointer;
+    if (auto selected_edge = select_edge(yx)) {
+      const auto [_, mesh, e, inter] = *selected_edge;
+      Vertex vnew = mesh->split_edge(e);
+      mesh->set_point(vnew, inter);
+      mesh->gflags().flag(mflag_ok) = false;
+      HB::redraw_later();
+      return;
+    }
   }
-  int obn;
-  GMesh* mesh;
-  Edge e;
-  Point pint;
-  if (!select_edge(yx, obn, mesh, e, pint)) {
-    HB::beep();
-    return;
-  }
-  Vertex vnew = mesh->split_edge(e);
-  mesh->set_point(vnew, pint);
-  mesh->gflags().flag(mflag_ok) = false;
-  for (Vertex v : mesh->vertices(vnew)) mesh->flags(v).flag(vflag_ok) = false;
-  if (subdivmode) ClearSubMesh();
-  HB::redraw_later();
+  HB::beep();
 }
 
 void collapse_edge(bool tovertex) {
-  Vec2<float> yx;
-  if (!HB::get_pointer(yx)) {
-    HB::beep();
-    return;
+  if (auto pointer = HB::get_pointer()) {
+    const Vec2<float> yx = *pointer;
+    if (auto selected_edge = select_edge(yx)) {
+      auto& [_, mesh, e, inter] = *selected_edge;
+      if (mesh->legal_edge_collapse(e)) {
+        Vertex v1 = mesh->vertex1(e), v2 = mesh->vertex2(e);
+        Point p1 = mesh->point(v1), p2 = mesh->point(v2);
+        mesh->collapse_edge(e);
+        if (tovertex) inter = dist2(p1, inter) < dist2(inter, p2) ? p1 : p2;
+        mesh->set_point(v1, inter);
+        mesh->gflags().flag(mflag_ok) = false;
+        HB::redraw_later();
+        return;
+      }
+    }
   }
-  int obn;
-  GMesh* mesh;
-  Edge e;
-  Point pint;
-  if (!select_edge(yx, obn, mesh, e, pint)) {
-    HB::beep();
-    return;
-  }
-  if (!mesh->legal_edge_collapse(e)) {
-    HB::beep();
-    return;
-  }
-  Vertex v1 = mesh->vertex1(e), v2 = mesh->vertex2(e);
-  Point p1 = mesh->point(v1), p2 = mesh->point(v2);
-  mesh->collapse_edge(e);
-  if (tovertex) pint = dist2(p1, pint) < dist2(pint, p2) ? p1 : p2;
-  mesh->set_point(v1, pint);
-  mesh->gflags().flag(mflag_ok) = false;
-  mesh->flags(v1).flag(vflag_ok) = false;
-  if (subdivmode) ClearSubMesh();
-  HB::redraw_later();
+  HB::beep();
 }
 
 bool try_toggle_vertex() {
-  Vec2<float> yx;
-  if (!HB::get_pointer(yx)) return false;
-  int obn;
-  GMesh* mesh;
-  Vertex v;
-  if (!select_vertex(yx, obn, mesh, v)) return false;
-  bool tagged = mesh->flags(v).flag(GMesh::vflag_cusp);
-  showf("Setting vertex %d tag to %d\n", mesh->vertex_id(v), !tagged);
-  mesh->flags(v).flag(GMesh::vflag_cusp) = !tagged;
-  mesh->set_string(v, mesh->flags(v).flag(GMesh::vflag_cusp) ? "cusp" : nullptr);
-  mesh->gflags().flag(mflag_ok) = false;
-  mesh->flags(v).flag(vflag_ok) = false;
-  return true;
+  if (auto pointer = HB::get_pointer()) {
+    const Vec2<float> yx = *pointer;
+    if (auto selected_vertex = select_vertex(yx)) {
+      const auto [_, mesh, v] = *selected_vertex;
+      bool tagged = mesh->flags(v).flag(GMesh::vflag_cusp);
+      showf("Setting vertex %d tag to %d\n", mesh->vertex_id(v), !tagged);
+      mesh->flags(v).flag(GMesh::vflag_cusp) = !tagged;
+      mesh->set_string(v, mesh->flags(v).flag(GMesh::vflag_cusp) ? "cusp" : nullptr);
+      mesh->gflags().flag(mflag_ok) = false;
+      return true;
+    }
+  }
+  return false;
 }
 
 bool try_toggle_edge() {
-  Vec2<float> yx;
-  if (!HB::get_pointer(yx)) return false;
-  int obn;
-  GMesh* pmesh;
-  Edge e;
-  Point pint;
-  if (!select_edge(yx, obn, pmesh, e, pint)) return false;
-  bool tagged = pmesh->flags(e).flag(GMesh::eflag_sharp);
-  showf("Setting edge (%d, %d) tag to %d\n", pmesh->vertex_id(pmesh->vertex1(e)), pmesh->vertex_id(pmesh->vertex2(e)),
-        !tagged);
-  pmesh->flags(e).flag(GMesh::eflag_sharp) = !tagged;
-  pmesh->set_string(e, pmesh->flags(e).flag(GMesh::eflag_sharp) ? "sharp" : nullptr);
-  pmesh->gflags().flag(mflag_ok) = false;
-  for (Vertex v : pmesh->vertices(e)) pmesh->flags(v).flag(vflag_ok) = false;
-  return true;
+  if (auto pointer = HB::get_pointer()) {
+    const Vec2<float> yx = *pointer;
+    if (auto selected_edge = select_edge(yx)) {
+      const auto [_, mesh, e, unused] = *selected_edge;
+      bool tagged = mesh->flags(e).flag(GMesh::eflag_sharp);
+      showf("Setting edge (%d, %d) tag to %d\n",  //
+            mesh->vertex_id(mesh->vertex1(e)), mesh->vertex_id(mesh->vertex2(e)), !tagged);
+      mesh->flags(e).flag(GMesh::eflag_sharp) = !tagged;
+      mesh->set_string(e, mesh->flags(e).flag(GMesh::eflag_sharp) ? "sharp" : nullptr);
+      mesh->gflags().flag(mflag_ok) = false;
+      return true;
+    }
+  }
+  return false;
 }
 
 void toggle_tag() {
   static const bool tagvertices = getenv_bool("TAG_VERTICES");
-  if (!(tagvertices && try_toggle_vertex()) && !try_toggle_edge()) {
-    HB::beep();
+  if ((tagvertices && try_toggle_vertex()) || try_toggle_edge()) {
+    HB::redraw_later();
     return;
   }
-  if (subdivmode) ClearSubMesh();
-  HB::redraw_later();
+  HB::beep();
 }
 
-Array<Edge> get_sharp_edges(GMesh& mesh, Vertex v) {
+auto get_sharp_edges(GMesh& mesh, Vertex v) {
   Array<Edge> are;
-  for (Edge e : mesh.edges(v)) {
+  for (Edge e : mesh.edges(v))
     if (mesh.flags(e).flag(GMesh::eflag_sharp)) are.push(e);
-  }
   return are;
 }
 
@@ -445,109 +377,100 @@ void untag(GMesh& mesh, Edge e) {
   mesh.flags(e).flag(GMesh::eflag_sharp) = false;
   mesh.set_string(e, nullptr);
   mesh.gflags().flag(mflag_ok) = false;
-  for (Vertex v : mesh.vertices(e)) mesh.flags(v).flag(vflag_ok) = false;
 }
 
 void untag_cut() {
-  Vec2<float> yx;
-  if (!HB::get_pointer(yx)) return;
-  int obn;
-  GMesh* mesh;
-  Edge e;
-  Point pint;
-  if (!select_edge(yx, obn, mesh, e, pint)) return;
-  if (!mesh->flags(e).flag(GMesh::eflag_sharp)) return;
-  if (subdivmode) ClearSubMesh();
-  HB::redraw_later();
-  {
-    untag(*mesh, e);
-    Edge er = e;
-    Array<Edge> are;
-    {
-      Edge ee = er;
-      Vertex v = mesh->vertex1(ee);
-      for (;;) {
-        are = get_sharp_edges(*mesh, v);
-        if (are.num() != 1) break;
-        ee = are[0];
-        if (ee == er) return;  // have loop!
-        untag(*mesh, ee);
-        v = mesh->opp_vertex(v, ee);
-      }
-    }
-    {
-      Edge ee = er;
-      Vertex v = mesh->vertex2(ee);
-      for (;;) {
-        are = get_sharp_edges(*mesh, v);
-        if (are.num() != 1) break;
-        ee = are[0];
-        untag(*mesh, ee);
-        v = mesh->opp_vertex(v, ee);
+  if (auto pointer = HB::get_pointer()) {
+    const Vec2<float> yx = *pointer;
+    if (auto selected_edge = select_edge(yx)) {
+      const auto [_, mesh, e, unused] = *selected_edge;
+      if (mesh->flags(e).flag(GMesh::eflag_sharp)) {
+        HB::redraw_later();
+        untag(*mesh, e);
+        Edge er = e;
+        Array<Edge> are;
+        {
+          Edge ee = er;
+          Vertex v = mesh->vertex1(ee);
+          for (;;) {
+            are = get_sharp_edges(*mesh, v);
+            if (are.num() != 1) break;
+            ee = are[0];
+            if (ee == er) return;  // Have loop!
+            untag(*mesh, ee);
+            v = mesh->opp_vertex(v, ee);
+          }
+        }
+        {
+          Edge ee = er;
+          Vertex v = mesh->vertex2(ee);
+          for (;;) {
+            are = get_sharp_edges(*mesh, v);
+            if (are.num() != 1) break;
+            ee = are[0];
+            untag(*mesh, ee);
+            v = mesh->opp_vertex(v, ee);
+          }
+        }
+        return;
       }
     }
   }
+  HB::beep();
 }
 
 void destroy_face() {
-  Vec2<float> yx;
-  if (!HB::get_pointer(yx)) {
-    HB::beep();
-    return;
+  if (auto pointer = HB::get_pointer()) {
+    const Vec2<float> yx = *pointer;
+    if (auto selected_face = select_face(yx)) {
+      const auto [_, mesh, f] = *selected_face;
+      mesh->destroy_face(f);
+      mesh->gflags().flag(mflag_ok) = false;
+      HB::redraw_later();
+      return;
+    }
   }
-  int obn;
-  GMesh* mesh;
-  Face f;
-  if (!select_face(yx, obn, mesh, f)) {
-    HB::beep();
-    return;
-  }
-  for (Vertex v : mesh->vertices(f)) mesh->flags(v).flag(vflag_ok) = false;
-  mesh->destroy_face(f);
-  mesh->gflags().flag(mflag_ok) = false;
-  if (subdivmode) ClearSubMesh();
-  HB::redraw_later();
+  HB::beep();
 }
 
 void print_info_mesh_elements() {
-  Vec2<float> yx;
-  if (!HB::get_pointer(yx)) {
-    HB::beep();
+  if (auto pointer = HB::get_pointer()) {
+    const Vec2<float> yx = *pointer;
+    SHOW("Retrieving info:");
+    auto selected_vertex = select_vertex(yx);
+    if (selected_vertex) {
+      const auto [_, mesh, v] = *selected_vertex;
+      SHOW(mesh->vertex_id(v), mesh->point(v), mesh->get_string(v));
+    }
+    auto selected_edge = select_edge(yx);
+    if (selected_edge) {
+      const auto [_, mesh, e, inter] = *selected_edge;
+      const int v1 = mesh->vertex_id(mesh->vertex1(e));
+      const int v2 = mesh->vertex_id(mesh->vertex2(e));
+      SHOW("On edge", v1, v2, inter, mesh->get_string(e));
+    }
+    auto selected_face = select_face(yx);
+    if (selected_face) {
+      const auto [_, mesh, f] = *selected_face;
+      SHOW(mesh->face_id(f), mesh->get_string(f));
+    }
+    if (selected_vertex && selected_face) {
+      Vertex v = selected_vertex->v;
+      Face f = selected_face->f;
+      // It is possible that v is in a different mesh, or that v and f are not adjacent.
+      GMesh* mesh = selected_face->mesh;
+      Array<Vertex> vertices;
+      mesh->get_vertices(f, vertices);
+      if (vertices.contains(v)) {
+        Corner c = mesh->corner(v, f);
+        SHOW(mesh->get_string(c));
+      } else {
+        SHOW("Vertex is not adjacent to face");
+      }
+    }
     return;
   }
-  SHOW("Retrieving info:");
-  int obn;
-  GMesh* pmesh;
-  Vertex v;
-  Face f;
-  Edge e;
-  Point point;
-  if (select_vertex(yx, obn, pmesh, v)) {
-    const GMesh& mesh = *pmesh;
-    SHOW(mesh.vertex_id(v), mesh.point(v), mesh.get_string(v));
-  }
-  if (select_edge(yx, obn, pmesh, e, point)) {
-    const GMesh& mesh = *pmesh;
-    const int v1 = mesh.vertex_id(mesh.vertex1(e));
-    const int v2 = mesh.vertex_id(mesh.vertex2(e));
-    SHOW("On edge", v1, v2, point, mesh.get_string(e));
-  }
-  if (select_face(yx, obn, pmesh, f)) {
-    const GMesh& mesh = *pmesh;
-    SHOW(mesh.face_id(f), mesh.get_string(f));
-  }
-  if (v && f) {
-    // It is possible that v is in a different mesh, or that v and f are not adjacent.
-    const GMesh& mesh = *pmesh;
-    Array<Vertex> vertices;
-    mesh.get_vertices(f, vertices);
-    if (vertices.contains(v)) {
-      Corner c = mesh.corner(v, f);
-      SHOW(mesh.get_string(c));
-    } else {
-      SHOW("Vertex is not adjacent to face");
-    }
-  }
+  HB::beep();
 }
 
 void crop_mesh_to_view() {
@@ -562,8 +485,8 @@ void crop_mesh_to_view() {
     for (Face f : mesh.faces()) {
       bool all_out = true;
       for (Vertex v : mesh.vertices(f)) {
-        float xo, yo, zo;
-        if (HB::world_to_vdc(mesh.point(v) * t, xo, yo, zo) && xo >= 0.f && xo <= 1.f && yo >= 0.f && yo <= 1.f) {
+        const auto [zs, xys] = HB::vdc_from_world(mesh.point(v) * t);
+        if (xys && (*xys)[0] >= 0.f && (*xys)[0] <= 1.f && (*xys)[1] >= 0.f && (*xys)[1] <= 1.f) {
           all_out = false;
           break;
         }
@@ -579,9 +502,8 @@ void crop_mesh_to_view() {
   }
   {
     Array<Vertex> ar_destroy;
-    for (Vertex v : mesh.vertices()) {
+    for (Vertex v : mesh.vertices())
       if (!mesh.degree(v)) ar_destroy.push(v);
-    }
     for (Vertex v : ar_destroy) mesh.destroy_vertex(v);
     showf(" and %d vertices removed\n", ar_destroy.num());
   }
@@ -606,85 +528,51 @@ void reinit() {
   if (!assertw(cob >= g_obs.first)) return;
   GMesh& mesh = *g_obs[cob].get_mesh();
   mesh.gflags().flag(mflag_ok) = false;
-  for (Vertex v : mesh.vertices()) mesh.flags(v).flag(vflag_ok) = false;
-  for (Face f : mesh.faces()) mesh.flags(f).flag(fflag_ok) = false;
   HB::redraw_now();
 }
 
 void set_recpoint() {
-  Vec2<float> yx;
-  if (!HB::get_pointer(yx)) {
-    HB::beep();
-    return;
-  }
-  int obn;
-  GMesh* mesh;
-  Face f;
-  if (!select_face(yx, obn, mesh, f)) {
-    if (!mode_centroid) {
-      rec_point = Point(0.f, 0.f, 0.f);
-      mode_centroid = true;  // turn on mode
-    } else {
-      HB::beep();
+  if (auto pointer = HB::get_pointer()) {
+    const Vec2<float> yx = *pointer;
+    auto selected_face = select_face(yx);
+    if (!selected_face) {
+      if (!mode_centroid) {
+        rec_point = Point(0.f, 0.f, 0.f);
+        mode_centroid = true;  // turn on mode
+      } else {
+        HB::beep();
+      }
+      return;
     }
+    const auto [obn, mesh, f] = *selected_face;
+    assertx(g_obs[obn].visible());
+    if (obn != cob) {
+      cob = obn;
+      HB::set_current_object(cob);
+    }
+    // Ideally, would compute actual intersection point within face.
+    // For now, just use centroid.
+    Polygon poly;
+    mesh->polygon(f, poly);
+    Point p = mean(poly);
+    if (1) showf("Hit face %d (centroid [%g, %g, %g])\n", mesh->face_id(f), p[0], p[1], p[2]);
+    rec_point = p;
+    mode_centroid = false;
     return;
   }
-  assertx(g_obs[obn].visible());
-  if (obn != cob) {
-    cob = obn;
-    HB::set_current_object(cob);
-  }
-  // Ideally, would compute actual intersection point within face.
-  // For now, just use centroid.
-  Polygon poly;
-  mesh->polygon(f, poly);
-  Point p = centroid(poly);
-  if (1) showf("Hit face %d (centroid [%g, %g, %g])\n", mesh->face_id(f), p[0], p[1], p[2]);
-  rec_point = p;
-  mode_centroid = false;
+  HB::beep();
 }
 
 void show_all_info() {
   SHOW("Frames:");
   for (int i = 0; i <= g_obs.last; i++) {
     showf("%s", g_obs[i].defined() ? "*" : " ");
-    assertw(FrameIO::write(std::cerr, g_obs[i].t(), i, (!i ? zoom : 0.f), false));
+    assertw(FrameIO::write(std::cerr, ObjectFrame{g_obs[i].t(), i, (!i ? zoom : 0.f)}));
   }
   SHOW("Viewing offset:");
-  assertw(FrameIO::write(std::cerr, tview, -1, 0.f, false));
+  assertw(FrameIO::write(std::cerr, ObjectFrame{tview, -1}));
   SHOW(ddistance, expo, keep_active, mode_centroid, want_jump, obinary, keystring);
   SHOW(g_obs.first, g_obs.last, HB::get_hither(), HB::get_yonder(), obview, cob);
-}
-
-void do_g3d_demofly() {
-  static float bu_hither;
-  static float bu_ambient;
-  demofly_mode++;
-  switch (demofly_mode) {
-    case 1:  // turn off texture, showing edges
-      press_keys("Dt");
-      break;
-    case 2:  // zoom out
-      press_keys("Do");
-      break;
-    case 3:  // go to upper view
-      press_keys("Do");
-      obview = 2;
-      // zoom is taken care of in set_viewing()
-      bu_hither = HB::get_hither();
-      HB::set_hither(.05f);
-      bu_ambient = ambient;
-      ambient = .3f;
-      break;
-    case 4:  // back to normal view
-      demofly_mode = 0;
-      press_keys("Dt");
-      obview = 0;
-      HB::set_hither(bu_hither);
-      ambient = bu_ambient;
-      break;
-    default: assertnever("");
-  }
 }
 
 void show_help() {
@@ -740,7 +628,7 @@ D       device prefix           D ?     list device commands
 
 void select_frel() {
   Frame& frel = selected.frel;
-  float f1 = -1, f2 = -1;  // best axis correlation
+  float f1 = -1.f, f2 = -1.f;  // best axis correlation
   int oax1 = -1, oax2 = -1, vax1 = -1, vax2 = -1, sign1 = 0, sign2 = 0;
   Frame fob = g_obs[cob].t();
   Frame vob = g_obs[obview].t();
@@ -788,7 +676,7 @@ void select_frel() {
 void DoJump() {
   if (!assertw(g_obs[cob].defined())) return;
   if (cob == obview) return;
-  const Bbox& bbox = g_obs[cob].bbox();
+  const auto& bbox = g_obs[cob].bbox();
   Vector diag = bbox[1] - bbox[0];
   Point centerbb = bbox[0] + diag / 2.f;
   if (!object_mode) {
@@ -816,18 +704,9 @@ void DoJump() {
 bool KeyPressed(const string& ps) {
   string s = ps;
   if (s == "<f1>") s = "?";
+  if (s == "<f5>") s = "r";
   if (s.size() != 1) return false;
   char ch = s[0];
-  if (b_g3d_demofly && contains(" Zf", ch)) {
-    if (demofly_idle_time > demofly_idle_time_thresh) {
-      demofly_idle_time = 0.f;  // avoid infinite recursion
-      if (ch != ' ') {
-        while (demofly_mode) KeyPressed(" ");
-      }
-    } else {
-      demofly_idle_time = 0.f;
-    }
-  }
   static char lastch;
   char thisch = ch;
   if (keylock && !contains("-=_+xd\tc~ Di? BQ[] avV be ol ^\x03", ch)) return false;
@@ -877,7 +756,7 @@ bool KeyPressed(const string& ps) {
       case '@':
         ch = 0;
         if (!assertw(cob >= g_obs.first)) return true;
-        if (!g_obs[cob].get_mesh()->num_vertices()) {
+        if (g_obs[cob].get_mesh()->empty()) {
           SHOW("empty mesh");
           break;
         }
@@ -995,6 +874,10 @@ bool KeyPressed(const string& ps) {
       rotate_around();
       HB::redraw_now();
       break;
+    case 'A':
+      enter_aim();
+      HB::redraw_now();
+      break;
     case 'i':
       info = (info + 1) % 3;  // 0..2
       HB::redraw_later();
@@ -1057,10 +940,7 @@ bool KeyPressed(const string& ps) {
       HB::redraw_now();
       break;
     case '.':
-    case '>':
-      if (0 && b_g3d_demofly) break;
-      save_state();
-      break;
+    case '>': save_state(); break;
     case '&': obinary = !obinary; break;
     case '#': show_all_info(); break;
     case '^': keylock = !keylock; break;
@@ -1074,10 +954,6 @@ bool KeyPressed(const string& ps) {
       break;
     case ' ':
       if (spacekill) HB::quit();
-      if (b_g3d_demofly) {
-        do_g3d_demofly();
-        HB::redraw_now();
-      }
       break;
     case 'w':
       // prefix code
@@ -1182,9 +1058,7 @@ void ButtonPressed(int butnum, bool pressed, bool shift, const Vec2<float>& yx) 
       SHOW(butnum);
       return;
     }
-    if (flightmode == EFlightmode::automatic) {  // added 20020501
-      flightmode = EFlightmode::none;
-    }
+    if (flightmode == EFlightmode::automatic) flightmode = EFlightmode::none;
     keep_active = false;
     button_active = butnum;
     selected.shift = shift;
@@ -1192,7 +1066,8 @@ void ButtonPressed(int butnum, bool pressed, bool shift, const Vec2<float>& yx) 
     selected.yxfo = twice(0.f);
     selected.yxio = twice(0.f);
     if (editmode && butnum != 1) {
-      if (!select_vertex(yx, selected.obn, selected.mesh, selected.v)) HB::beep();
+      selected.selected_vertex = select_vertex(yx);
+      if (!selected.selected_vertex) HB::beep();
     }
     selected.frel = Frame::identity();
     if (!object_mode && cob != obview) select_frel();

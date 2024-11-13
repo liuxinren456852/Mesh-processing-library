@@ -5,11 +5,9 @@
 
 // Make sure that hh::details::hh_init() is called before any other function.
 
-namespace hh {
-namespace details {
+namespace hh::details {
 int hh_init();
-static HH_UNUSED int dummy_init_hh = hh_init();
-}  // namespace details
-}  // namespace hh
+[[maybe_unused]] static int dummy_init_hh = hh_init();
+}  // namespace hh::details
 
 #endif  // MESH_PROCESSING_LIBHH_HH_INIT_H_

@@ -19,9 +19,9 @@ string Video::diagnostic_string(const Vec3<int>& dims, const Attrib& attrib) {
   if (attrib.suffix != "") s += " (" + attrib.suffix + ")";
   int brate = attrib.bitrate;
   if (brate)
-    s += (brate > 1000000 ? sform(" (%.2fMi bps)", brate / 1000000.f)
-          : brate > 1000  ? sform(" (%.2fKi bps)", brate / 1000.f)
-                          : sform(" (%d bps)", brate));
+    s += (brate > 1'000'000 ? sform(" (%.2fMi bps)", brate / 1'000'000.f)
+          : brate > 1000    ? sform(" (%.2fKi bps)", brate / 1000.f)
+                            : sform(" (%d bps)", brate));
   return s;
 }
 
@@ -103,8 +103,9 @@ VideoNv12 scale(const VideoNv12& video_nv12, const Vec2<float>& syx, const Vec2<
   }
   newvideo_nv12.init(concat(V(video_nv12.nframes()), newdims));
   if (product(newdims)) {
-    parallel_for_each(range(newvideo_nv12.nframes()),
-                      [&](const int f) { scale(video_nv12[f], filterbs, bordervalue, newvideo_nv12[f]); });
+    parallel_for_each(range(newvideo_nv12.nframes()), [&](const int f) {  //
+      scale(video_nv12[f], filterbs, bordervalue, newvideo_nv12[f]);
+    });
   }
   return newvideo_nv12;
 }

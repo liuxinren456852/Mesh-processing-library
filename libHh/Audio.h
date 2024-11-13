@@ -7,16 +7,16 @@
 #if 0
 {
   // 400 Hz tone for 3 s at 48 kHz sampling in stereo
-  const double freq = 400., duration = 3., samplerate = 48 * 1000.;
+  const double freq = 400., duration = 3., samplerate = 48'000.;
   const int nchannels = 2;
-  const int nsamples = static_cast<int>(duration * samplerate + .5);
+  const int nsamples = int(duration * samplerate + .5);
   Audio audio(V(nchannels, nsamples));
   audio.attrib().samplerate = samplerate;
   for_int(i, audio.nsamples()) for_int(ch, audio.nchannels()) {
     float t = i / samplerate;  // time in seconds
     audio(ch, i) = std::sin(t * freq * TAU);
   }
-  audio.attrib().bitrate = 256 * 1000;  // 256 kbps
+  audio.attrib().bitrate = 256'000;  // 256 kbps
   audio.write_file("file.mp3");
   // Audio read/write is performed using ffmpeg.
 }
@@ -35,6 +35,7 @@ class Audio : public Grid<2, float> {
   struct Attrib;
   explicit Audio(const Vec2<int>& dims = V(0, 0)) { init(dims); }  // nchannels, nsamples
   explicit Audio(const Audio&) = default;
+  explicit Audio(const string& filename) { read_file(filename); }
   Audio(Audio&& v) noexcept { swap(*this, v); }
   Audio(base&& v) noexcept { swap(implicit_cast<base&>(*this), v); }
   ~Audio() {}

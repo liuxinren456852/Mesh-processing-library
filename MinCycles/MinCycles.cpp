@@ -12,6 +12,8 @@ int maxcyclenedges = std::numeric_limits<int>::max();
 int ncycles = std::numeric_limits<int>::max();
 int genus = 0;
 float fraccyclelength = 1.f;
+bool mark_edges_sharp = true;
+bool mark_faces_filled = true;
 bool nooutput = false;
 
 GMesh mesh;
@@ -23,6 +25,8 @@ void do_closecycles() {
   cmc._ncycles = ncycles;
   cmc._desired_genus = genus;
   cmc._frac_cycle_length = fraccyclelength;
+  cmc._mark_edges_sharp = mark_edges_sharp;
+  cmc._mark_faces_filled = mark_faces_filled;
   cmc.compute();
 }
 
@@ -30,35 +34,42 @@ void do_closecycles() {
 
 int main(int argc, const char** argv) {
   ParseArgs args(argc, argv);
-  HH_ARGSC("", ":* Criteria for stopping topological simplification:");
+  HH_ARGSC("A mesh is read from stdin or first arg.  Subsequent options are:");
+  HH_ARGSC(HH_ARGS_INDENT "Criteria for stopping topological simplification:");
   HH_ARGSP(maxcyclelength, "len : when smallest cycle exceeds specified length");
-  HH_ARGSP(maxcyclenedges, "n : when smallest cycle has >n edges");
+  HH_ARGSP(maxcyclenedges, "n : when smallest cycle has > n edges");
   HH_ARGSP(ncycles, "n : after removing this number of cycles");
-  HH_ARGSP(genus, "g : when mesh genus <=g");
-  HH_ARGSC("", ":*");
-  HH_ARGSP(fraccyclelength, "frac>=1 : allow finding cycles with length fractionally greater than minimal");
-  HH_ARGSC("", ":*");
+  HH_ARGSP(genus, "g : when mesh genus <= g");
+  HH_ARGSC("", ":");
+  HH_ARGSP(fraccyclelength, "frac>=1. : allow finding cycles with length fractionally greater than minimal");
+  HH_ARGSP(mark_edges_sharp, "bool : mark loops of edges using 'sharp' key string");
+  HH_ARGSP(mark_faces_filled, "bool : mark rings of new faces using 'filled' key string");
+  HH_ARGSC("", ":");
   HH_ARGSD(closecycles, ": perform topological simplification");
   HH_ARGSF(nooutput, ": do not print mesh at program end");
-  HH_TIMER(main);
   string arg0 = args.num() ? args.peek_string() : "";
-  if (!ParseArgs::special_arg(arg0)) {
-    string filename = "-";
-    if (args.num() && (arg0 == "-" || arg0[0] != '-')) filename = args.get_filename();
-    RFile fi(filename);
-    HH_TIMER(_readmesh);
-    for (string sline; fi().peek() == '#';) {
-      assertx(my_getline(fi(), sline));
-      if (sline.size() > 1) showff("|%s\n", sline.substr(2).c_str());
-    }
-    mesh.read(fi());
-    showff("%s", args.header().c_str());
+  if (ParseArgs::special_arg(arg0)) args.parse(), exit(0);
+  string filename = "-";
+  if (args.num() && (arg0 == "-" || arg0[0] != '-')) filename = args.get_filename();
+  RFile fi(filename);
+  for (string line; fi().peek() == '#';) {
+    assertx(my_getline(fi(), line));
+    if (line.size() > 1) showff("|%s\n", line.substr(2).c_str());
   }
-  args.parse();
+  showff("%s", args.header().c_str());
+  {
+    HH_TIMER("MinCycles");
+    {
+      HH_TIMER("_readmesh");
+      mesh.read(fi());
+    }
+    args.parse();
+  }
   hh_clean_up();
   if (!nooutput) {
-    HH_TIMER(_writemesh);
+    HH_TIMER("_writemesh");
     mesh.write(std::cout);
   }
+  if (!k_debug) exit_immediately(0);
   return 0;
 }

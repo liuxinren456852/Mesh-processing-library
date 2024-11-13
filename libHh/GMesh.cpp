@@ -1,10 +1,9 @@
 // -*- C++ -*-  Copyright (c) Microsoft Corporation; see license.txt
 #include "libHh/GMesh.h"
 
-#include <cctype>   // std::isalnum()
-#include <cstdio>   // sscanf()
-#include <cstdlib>  // atoi()
-#include <cstring>  // strncmp(), strlen(), std::memmove(), etc.
+#include <cctype>    // isalnum()
+#include <charconv>  // to_chars()
+#include <cstring>   // strncmp(), strlen(), memmove(), etc.
 
 #include "libHh/A3dStream.h"
 #include "libHh/Array.h"
@@ -95,11 +94,9 @@ float GMesh::length(Edge e) const { return sqrt(length2(e)); }
 
 float GMesh::area(Face f) const {
   if (is_triangle(f)) {
-    Vec3<Vertex> va;
-    triangle_vertices(f, va);
-    return sqrt(area2(point(va[0]), point(va[1]), point(va[2])));
+    return sqrt(area2(triangle_points(f)));
   } else {
-    Polygon& poly = _tmp_poly;
+    Polygon poly;
     polygon(f, poly);
     return poly.get_area();
   }
@@ -115,27 +112,25 @@ namespace {
 
 inline int str_key_nchars(const char* s) {
   const char* p = s;
-  int i = 0;
   for (;;) {
-    char ch = *p;
+    const char ch = *p;
     if (ch == ' ' || ch == '=' || ch == 0) break;
     p++;
-    i++;
   }
-  return i;  // narrow_cast<int>(p-s);
+  return narrow_cast<int>(p - s);
 }
 
 inline const char* str_last_non_space(const char* s) {
   const char* p = s;
   for (;;) {
-    char ch = *p;
+    const char ch = *p;
     if (ch == ' ' || ch == 0) break;
     p++;
   }
   return p - 1;
 }
 
-// I don't remember: how is this different (if it is) from strchr()?  maybe faster when inline
+// This may be identical to strchr().  Possibly faster when inlined.
 inline const char* str_chr(const char* s, char ch) {
   for (const char* p = s;;) {
     char chp = *p;
@@ -145,29 +140,13 @@ inline const char* str_chr(const char* s, char ch) {
   }
 }
 
-bool parse_aux(const char* s, ArrayView<float> ar) {
-  float a, b, c, d;
-  char ch;
-  switch (ar.num()) {
-    case 1:
-      if (!assertw(sscanf(s, "(%g%c", &a, &ch) == 2 && ch == ')')) return false;
-      ar[0] = a;
-      break;
-    case 2:
-      if (!assertw(sscanf(s, "(%g %g%c", &a, &b, &ch) == 3 && ch == ')')) return false;
-      ar[0] = a, ar[1] = b;
-      break;
-    case 3:
-      if (!assertw(sscanf(s, "(%g %g %g%c", &a, &b, &c, &ch) == 4 && ch == ')')) return false;
-      ar[0] = a, ar[1] = b, ar[2] = c;
-      break;
-    case 4:
-      if (!assertw(sscanf(s, "(%g %g %g %g%c", &a, &b, &c, &d, &ch) == 5 && ch == ')')) return false;
-      ar[0] = a, ar[1] = b, ar[2] = c, ar[3] = d;
-      break;
-    default: assertnever("");
+void parse_aux(const char* s, ArrayView<float> ar) {
+  assertx(*s++ == '(');
+  for_int(c, ar.num()) {
+    if (c && *s++ != ' ') assertnever(string("got: ") + s);
+    ar[c] = float_from_chars(s);
   }
-  return true;
+  assertx(*s++ == ')');
 }
 
 }  // namespace
@@ -191,29 +170,24 @@ bool StringKeyIter::next(const char*& kb, int& kl, const char*& vb, int& vl) {
   const char* send;
   if (ch == '(') {
     send = str_chr(_s + nch + 2, ')');
-    if (!send) {
-      SHOW(_s, _s + nch + 2);
-      assertnever("No matching ')'");
-    }
+    if (!send) assertnever("No matching ')' " + SSHOW(_s, _s + nch + 2));
   } else if (ch == '"') {
     send = str_chr(_s + nch + 2, '"');
-    if (!send) {
-      SHOW(_s, _s + nch + 2);
-      assertnever("No matching '\"'");
-    }
+    if (!send) assertnever("No matching '\"' " + SSHOW(_s, _s + nch + 2));
   } else if (std::isalnum(ch)) {
     send = str_last_non_space(_s + nch + 2);
   } else {
     if (Warning("Cannot parse StringKey value")) SHOW(_str, _s + nch + 1);
     return false;
   }
-  vb = _s + nch + 1, vl = narrow_cast<int>(send - (_s + nch));
+  vb = _s + nch + 1, vl = narrow_cast<int>(send - vb + 1);
   _s = send + 1;
   if (_s[0] == ' ') _s++;
   return true;
 }
 
 bool GMesh::string_has_key(const char* ss, const char* key) {
+  if (!ss) return false;
   int keyl = int(strlen(key));
   bool found = false;
   for_cstring_key_value_ptr(ss, [&](const char* kb, int kl, const char* vb, int vl) {
@@ -241,23 +215,14 @@ const char* GMesh::string_key(string& str, const char* ss, const char* key) {
   return sfound;
 }
 
-const char* csform_vec(string& str, CArrayView<float> ar) {
-  switch (ar.num()) {
-    case 1: return csform(str, "(%g)", ar[0]);
-    case 2: return csform(str, "(%g %g)", ar[0], ar[1]);
-    case 3: return csform(str, "(%g %g %g)", ar[0], ar[1], ar[2]);
-    case 4: return csform(str, "(%g %g %g %g)", ar[0], ar[1], ar[2], ar[3]);
-    default: assertnever("");
-  }
-}
-
 bool parse_key_vec(const char* ss, const char* key, ArrayView<float> ar) {
   assertx(key && ar.num() >= 1);
   if (!ss) return false;
   string str;
   const char* s = GMesh::string_key(str, ss, key);
   if (!s) return false;
-  return parse_aux(s, ar);
+  parse_aux(s, ar);
+  return true;
 }
 
 bool GMesh::parse_corner_key_vec(Corner c, const char* key, ArrayView<float> ar) const {
@@ -265,7 +230,8 @@ bool GMesh::parse_corner_key_vec(Corner c, const char* key, ArrayView<float> ar)
   string str;
   const char* s = corner_key(str, c, key);
   if (!s) return false;
-  return parse_aux(s, ar);
+  parse_aux(s, ar);
+  return true;
 }
 
 const char* GMesh::corner_key(string& str, Corner c, const char* key) const {
@@ -273,16 +239,16 @@ const char* GMesh::corner_key(string& str, Corner c, const char* key) const {
   bool b2 = string_has_key(get_string(corner_vertex(c)), key);
   if (!b1 && !b2) return nullptr;
   if (b1 && b2) Warning("Have both vertex and corner info");
-  if (!b1) return assertx(string_key(str, get_string(corner_vertex(c)), key));
-  return assertx(string_key(str, get_string(c), key));
+  if (!b1) return string_key(str, get_string(corner_vertex(c)), key);
+  return string_key(str, get_string(c), key);
 }
 
 string GMesh::string_update(const string& s, const char* key, const char* val) {
   // inefficient (seldom used)
   unique_ptr<char[]> ss = s != "" ? make_unique_c_string(s.c_str()) : nullptr;
   update_string_ptr(ss, key, val);
-  string snew = ss ? ss.get() : "";
-  return snew;
+  string s_new = ss ? ss.get() : "";
+  return s_new;
 }
 
 void GMesh::update_string_ptr(unique_ptr<char[]>& ss, const char* key, const char* val) {
@@ -305,10 +271,7 @@ void GMesh::update_string_ptr(unique_ptr<char[]>& ss, const char* key, const cha
     }
     bool found = static_cast<size_t>(kl) == keyl && !strncmp(kb, key, kl);
     if (found) {
-      if (fkb) {
-        SHOW(sso, kb, kl, vb, vl, key, val);
-        assertnever("dup key");
-      }
+      if (fkb) assertnever("dup key: " + SSHOW(sso, kb, kl, vb, vl, key, val));
       fkb = kb;
       fvl = vl;
     }
@@ -327,52 +290,49 @@ void GMesh::update_string_ptr(unique_ptr<char[]>& ss, const char* key, const cha
     SHOW(vall);
   }
   unique_ptr<char[]> arnew;
-  char* p0;
+  char* s0;
   if (newl == 0) {  // new string is null (""), so clear it
     ss = nullptr;
     return;
   } else if (sso && newl <= ssol) {  // new string fits, so copy in-place
-    p0 = ss.get();                   // "char*" whereas sso is "const char*"
+    s0 = ss.get();                   // "char*" whereas sso is "const char*"
   } else {                           // string needs to grow
     arnew = make_unique<char[]>(newl + 1);
-    p0 = arnew.get();
+    s0 = arnew.get();
   }
-  char* p = p0;
-  ASSERTX(p);
+  char* s = s0;
+  ASSERTX(s);
   if (fkb) {
     ASSERTX(sso);  // logic implies it
     if (fkb > sso) {
-      if (p != sso) std::memcpy(p, sso, fkb - sso - 1);  // does not write '\0'
-      p += fkb - sso - 1;
+      if (s != sso) std::memcpy(s, sso, fkb - sso - 1);  // does not write '\0'
+      s += fkb - sso - 1;
     }
   } else {
     if (sso) {
-      ASSERTX(p != sso);
-      std::memcpy(p, sso, ssol);
-      p += ssol;
+      ASSERTX(s != sso);
+      std::memcpy(s, sso, ssol);
+      s += ssol;
     }
   }
   if (val) {
-    if (p > p0) *p++ = ' ';
-    std::memmove(p, key, keyl);
-    p += keyl;
+    if (s > s0) *s++ = ' ';
+    std::memmove(s, key, keyl);
+    s += keyl;
     if (*val) {
-      *p++ = '=';
-      std::memmove(p, val, vall);
-      p += vall;
+      *s++ = '=';
+      std::memmove(s, val, vall);
+      s += vall;
     }
   }
   if (frb) {
-    if (p > p0) *p++ = ' ';
+    if (s > s0) *s++ = ' ';
     size_t frbl = strlen(frb);  // frb may be partially overwritten by next std::memmove()
-    if (p != frb) std::memmove(p, frb, frbl);
-    p += frbl;
+    if (s != frb) std::memmove(s, frb, frbl);
+    s += frbl;
   }
-  *p = '\0';
-  if (p != p0 + newl) {
-    SHOW(sso, p0, p - p0, newl);
-    assertnever("");
-  }
+  *s = '\0';
+  if (s != s0 + newl) assertnever(SSHOW(sso, s0, s - s0, newl));
   if (arnew) ss = std::move(arnew);
 }
 
@@ -387,132 +347,154 @@ void GMesh::update_string(Corner c, const char* key, const char* val) { update_s
 // I/O
 
 void GMesh::read(std::istream& is) {
-  for (string sline; my_getline(is, sline);) {
-    read_line(const_cast<char*>(sline.c_str()));
-  }
+  for (string line; my_getline(is, line);) read_line(const_cast<char*>(line.c_str()));
   if (debug() >= 1) ok();
+}
+
+// Get the string within the braces.  Note the side-effect on `s`!  This function is copied elsewhere too.
+static const char* get_sinfo(const char* s_const) {
+  char* s = const_cast<char*>(s_const);
+  while (std::isspace(*s)) s++;
+  if (!*s) return nullptr;
+  if (*s != '{') assertnever("Unexpected character (not '{') at start of '" + string(s) + "'");
+  char* s2 = strchr(s + 1, '}');
+  if (!s2) assertnever("No matching '}' in '" + string(s) + "'");
+  *s++ = 0;
+  *s2 = 0;
+  return s;
 }
 
 void GMesh::read_line(char* sline) {
   if (sline[0] == '#') return;
-  char* sinfo = const_cast<char*>(str_chr(sline, '{'));
-  if (sinfo) {
-    *sinfo++ = 0;
-    char* s = const_cast<char*>(str_chr(sinfo, '}'));
-    if (!s) {
-      if (Warning("Mesh info string has no matching '}'")) SHOW(sline, sinfo);
-      sinfo = nullptr;
-    } else
-      *s = 0;
+  switch (sline[0]) {
+    case 'V':
+      if (const char* s = after_prefix(sline, "Vertex ")) {
+        const int vi = int_from_chars(s);
+        Point p;
+        for_int(c, 3) p[c] = float_from_chars(s);
+        const char* sinfo = get_sinfo(s);
+        Vertex v = create_vertex_private(vi);
+        set_point(v, p);
+        if (sinfo) {
+          set_string(v, sinfo);
+          if (string_has_key(sinfo, "cusp")) flags(v).flag(vflag_cusp) = true;
+        }
+        return;
+      }
+      if (const char* s = after_prefix(sline, "Vspl ")) {
+        const int vi = int_from_chars(s), vs1i = int_from_chars(s), vs2i = int_from_chars(s), vni = int_from_chars(s);
+        assert_no_more_chars(s);
+        split_vertex(id_vertex(vi), (vs1i ? id_vertex(vs1i) : nullptr), (vs2i ? id_vertex(vs2i) : nullptr), vni);
+        return;
+      }
+      if (const char* s = after_prefix(sline, "Vmerge ")) {
+        const int vi1 = int_from_chars(s), vi2 = int_from_chars(s);
+        assert_no_more_chars(s);
+        merge_vertices(id_vertex(vi1), id_vertex(vi2));
+        return;
+      }
+      break;
+    case 'F':
+      if (const char* s = after_prefix(sline, "Face ")) {
+        const int fi = int_from_chars(s);
+        PArray<Vertex, 6> va;
+        for (;;) {
+          while (std::isspace(*s)) s++;
+          if (!*s || *s == '{') break;
+          const int vi = int_from_chars(s);
+          Vertex v = id_retrieve_vertex(vi);
+          if (!v) assertnever("Vertex in '" + string(sline) + "' does not exist");
+          va.push(v);
+        }
+        if (!assertw(va.num() >= 3)) return;
+        if (!assertw(legal_create_face(va))) {  // Profiler shows as costly, but not really -- just cache-priming.
+          if (0) SHOW(sline, va);
+          return;
+        }
+        Face f = fi ? create_face_private(fi, va) : create_face(va);
+        if (const char* sinfo = get_sinfo(s)) set_string(f, sinfo);
+        return;
+      }
+      break;
+    case 'C':
+      if (const char* s = after_prefix(sline, "Corner ")) {
+        const int vi = int_from_chars(s), fi = int_from_chars(s);
+        Vertex v = id_retrieve_vertex(vi);
+        Face f = id_retrieve_face(fi);
+        const char* sinfo = assertx(get_sinfo(s));
+        if (!v) {
+          Warning("Corner vertex does not exist");
+        } else if (!f) {
+          Warning("Corner face does not exist");
+        } else {
+          set_string(corner(v, f), sinfo);
+        }
+        return;
+      }
+      if (const char* s = after_prefix(sline, "CVertex ")) {
+        create_vertex_private(to_int(s));
+        return;
+      }
+      break;
+    case 'E':
+      if (const char* s = after_prefix(sline, "Edge ")) {
+        const int vi1 = int_from_chars(s), vi2 = int_from_chars(s);
+        const char* sinfo = get_sinfo(s);
+        Edge e = query_edge(id_vertex(vi1), id_vertex(vi2));
+        if (!e)
+          Warning("GMesh::read_line(): Did not find edge in mesh");
+        else if (sinfo) {
+          set_string(e, sinfo);
+          flags(e).flag(eflag_sharp) = string_has_key(sinfo, "sharp");
+        }
+        return;
+      }
+      if (const char* s = after_prefix(sline, "Ecol ")) {
+        const int vi1 = int_from_chars(s), vi2 = int_from_chars(s);
+        assert_no_more_chars(s);
+        // collapse_edge(ordered_edge(id_vertex(vi1), id_vertex(vi2)));
+        Vertex vs = id_vertex(vi1), vt = id_vertex(vi2);
+        collapse_edge_vertex(edge(vs, vt), vs);
+        return;
+      }
+      if (const char* s = after_prefix(sline, "Eswa ")) {
+        const int vi1 = int_from_chars(s), vi2 = int_from_chars(s);
+        assert_no_more_chars(s);
+        assertx(swap_edge(ordered_edge(id_vertex(vi1), id_vertex(vi2))));
+        return;
+      }
+      if (const char* s = after_prefix(sline, "Espl ")) {
+        const int vi1 = int_from_chars(s), vi2 = int_from_chars(s), vi3 = int_from_chars(s);
+        assert_no_more_chars(s);
+        split_edge(ordered_edge(id_vertex(vi1), id_vertex(vi2)), vi3);
+        return;
+      }
+      break;
+    case 'M':
+      if (const char* s = after_prefix(sline, "MVertex ")) {
+        const int vi = int_from_chars(s);
+        Point p;
+        for_int(c, 3) p[c] = float_from_chars(s);
+        const char* sinfo = get_sinfo(s);
+        Vertex v = id_vertex(vi);
+        set_point(v, p);
+        if (sinfo) set_string(v, sinfo);
+        return;
+      }
+      break;
+    case 'D':
+      if (const char* s = after_prefix(sline, "DVertex ")) {
+        destroy_vertex(id_vertex(to_int(s)));
+        return;
+      }
+      if (const char* s = after_prefix(sline, "DFace ")) {
+        destroy_face(id_face(to_int(s)));
+        return;
+      }
+      break;
+    default: break;
   }
-  if (sline[0] == 'V' && !strncmp(sline, "Vertex ", 7)) {
-    Point p;
-    int vi;
-    assertx(sscanf(sline, "Vertex %d %g %g %g", &vi, &p[0], &p[1], &p[2]) == 4);
-    Vertex v = create_vertex_private(vi);
-    set_point(v, p);
-    if (sinfo) {
-      set_string(v, sinfo);
-      if (string_has_key(sinfo, "cusp")) flags(v).flag(vflag_cusp) = true;
-    }
-  } else if (sline[0] == 'F' && !strncmp(sline, "Face ", 5)) {
-    PArray<Vertex, 6> va;
-    char* s = sline + 4;
-    int fi = -1;
-    for (;;) {
-      while (*s && isspace(*s)) s++;
-      if (!*s) break;
-      char* beg = s;
-      while (*s && isdigit(*s)) s++;
-      if (*s && !isspace(*s)) {
-        SHOW(sline, *s);
-        assertnever("");
-      }
-      int j = atoi(beg);  // terminated by ' ' so cannot use to_int()
-      if (fi < 0) {
-        fi = j;
-        continue;
-      }
-      Vertex v = id_retrieve_vertex(j);
-      if (!v) {
-        SHOW(sline, j);
-        assertnever("Vertex does not exist");
-      }
-      va.push(v);
-    }
-    if (!assertw(va.num() >= 3)) return;
-    if (!assertw(legal_create_face(va))) {
-      if (1) {
-        SHOWL;
-        SHOW(va.num());
-        SHOW(sline);
-        for (Vertex v : va) SHOW(vertex_id(v));
-      }
-      return;
-    }
-    Face f = fi ? create_face_private(fi, va) : create_face(va);
-    if (sinfo) set_string(f, sinfo);
-  } else if (sline[0] == 'C' && !strncmp(sline, "Corner ", 7)) {
-    int vi;
-    int fi;
-    assertx(sscanf(sline, "Corner %d %d", &vi, &fi) == 2);
-    Vertex v = id_retrieve_vertex(vi);
-    Face f = id_retrieve_face(fi);
-    if (!v) {
-      Warning("Corner vertex does not exist");
-    } else if (!f) {
-      Warning("Corner face does not exist");
-    } else {
-      Corner c = corner(v, f);
-      if (sinfo) set_string(c, sinfo);
-    }
-  } else if (sline[0] == 'E' && !strncmp(sline, "Edge ", 5)) {
-    int vi1, vi2;
-    assertx(sscanf(sline, "Edge %d %d", &vi1, &vi2) == 2);
-    Edge e = query_edge(id_vertex(vi1), id_vertex(vi2));
-    if (!e) Warning("GMesh::read(): Did not find edge in mesh");
-    if (e && sinfo) {
-      set_string(e, sinfo);
-      flags(e).flag(eflag_sharp) = string_has_key(sinfo, "sharp");
-    }
-  } else if (!strncmp(sline, "MVertex ", 8)) {
-    Point p;
-    int vi;
-    assertx(sscanf(sline, "MVertex %d %g %g %g", &vi, &p[0], &p[1], &p[2]) == 4);
-    Vertex v = id_vertex(vi);
-    set_point(v, p);
-    if (sinfo) set_string(v, sinfo);
-  } else if (!strncmp(sline, "CVertex ", 8)) {
-    create_vertex_private(to_int(sline + 8));
-  } else if (!strncmp(sline, "DVertex ", 8)) {
-    destroy_vertex(id_vertex(to_int(sline + 8)));
-  } else if (!strncmp(sline, "DFace ", 6)) {
-    destroy_face(id_face(to_int(sline + 6)));
-  } else if (!strncmp(sline, "Ecol ", 5)) {
-    int vi1, vi2;
-    assertx(sscanf(sline, "Ecol %d %d", &vi1, &vi2) == 2);
-    // collapse_edge(ordered_edge(id_vertex(vi1), id_vertex(vi2)));
-    Vertex vs = id_vertex(vi1), vt = id_vertex(vi2);
-    collapse_edge_vertex(edge(vs, vt), vs);
-  } else if (!strncmp(sline, "Eswa ", 5)) {
-    int vi1, vi2;
-    assertx(sscanf(sline, "Eswa %d %d", &vi1, &vi2) == 2);
-    assertx(swap_edge(ordered_edge(id_vertex(vi1), id_vertex(vi2))));
-  } else if (!strncmp(sline, "Espl ", 5)) {
-    int vi1, vi2, vi3;
-    assertx(sscanf(sline, "Espl %d %d %d", &vi1, &vi2, &vi3) == 3);
-    split_edge(ordered_edge(id_vertex(vi1), id_vertex(vi2)), vi3);
-  } else if (!strncmp(sline, "Vspl ", 5)) {
-    int vi, vs1i, vs2i, vni;
-    assertx(sscanf(sline, "Vspl %d %d %d %d", &vi, &vs1i, &vs2i, &vni) == 4);
-    split_vertex(id_vertex(vi), (vs1i ? id_vertex(vs1i) : nullptr), (vs2i ? id_vertex(vs2i) : nullptr), vni);
-  } else if (!strncmp(sline, "Vmerge ", 7)) {
-    int vi1, vi2;
-    assertx(sscanf(sline, "Vmerge %d %d", &vi1, &vi2) == 2);
-    merge_vertices(id_vertex(vi1), id_vertex(vi2));
-  } else {
-    if (Warning("GMesh::read: cannot parse line")) SHOW(sline);
-  }
+  if (Warning("GMesh::read: cannot parse line")) SHOW(sline);
 }
 
 static inline int strprefix(const char* s, const char* p) {
@@ -529,43 +511,139 @@ bool GMesh::recognize_line(const char* s) {
       "Vertex ",  "Face ",  "Corner ", "Edge ", "MVertex ", "CVertex ",
       "DVertex ", "DFace ", "Ecol ",   "Eswa ", "Espl ",    "Vspl",
   };
-  for (const char* prefix : prefixes) {
+  for (const char* prefix : prefixes)
     if (strprefix(s, prefix)) return true;
-  }
   return false;
 }
 
 void GMesh::write(std::ostream& os) const {
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ < 11
+  // https://en.cppreference.com/w/cpp/compiler_support/17
+  // GCC libstdc++ lacks float support for elementary string conversions prior to Version 11.
   for (Vertex v : ordered_vertices()) {
     const Point& p = point(v);
     os << "Vertex " << vertex_id(v) << "  " << p[0] << " " << p[1] << " " << p[2];
     const char* sinfo = get_string(v);
     if (sinfo) os << " {" << sinfo << "}";
-    os << "\n";
-    assertx(os);
+    assertx(os << "\n");
   }
-  for (Face f : ordered_faces()) {
+
+  Array<Face> ar_faces{ordered_faces()};
+  for (Face f : ar_faces) {
     os << "Face " << face_id(f) << " ";
     for (Vertex v : vertices(f)) os << " " << vertex_id(v);
     const char* sinfo = get_string(f);
     if (sinfo) os << " {" << sinfo << "}";
-    os << "\n";
-    assertx(os);
+    assertx(os << "\n");
   }
+
+  for (Edge e : edges()) {
+    const char* sinfo = get_string(e);
+    if (sinfo)
+      assertx(os << "Edge " << vertex_id(vertex1(e)) << " " << vertex_id(vertex2(e)) << " {" << sinfo << "}\n");
+  }
+
+  for (Face f : ar_faces) {
+    for (Corner c : corners(f)) {
+      const char* sinfo = get_string(c);
+      if (sinfo)
+        assertx(os << "Corner " << vertex_id(corner_vertex(c)) << " " << face_id(f) << " {" << sinfo << "}\n");
+    }
+  }
+
+#else
+  constexpr int capacity = 500;
+  char buffer[capacity];
+  char* const end = buffer + capacity;
+
+  strcpy(buffer, "Vertex ");
+  char* beg = buffer + strlen(buffer);
+  for (Vertex v : ordered_vertices()) {
+    char* s = beg;
+    s = std::to_chars(s, end, vertex_id(v)).ptr;
+    *s++ = ' ';
+    const Point& p = point(v);
+    for_int(c, 3) {
+      *s++ = ' ';
+      constexpr int precision = 6;  // Default for printf("%g").
+      s = std::to_chars(s, end, p[c], std::chars_format::general, precision).ptr;
+    }
+    if (const char* sinfo = get_string(v)) {
+      *s++ = ' ';
+      *s++ = '{';
+      assertx(s + strlen(sinfo) + 4 < end);
+      while (*sinfo) *s++ = *sinfo++;
+      *s++ = '}';
+    }
+    *s++ = '\n';
+    *s = '\0';
+    assertx(os << buffer);
+  }
+
+  Array<Face> ar_faces{ordered_faces()};
+  strcpy(buffer, "Face ");
+  beg = buffer + strlen(buffer);
+  for (Face f : ar_faces) {
+    char* s = beg;
+    s = std::to_chars(s, end, face_id(f)).ptr;
+    *s++ = ' ';
+    for (Vertex v : vertices(f)) {
+      *s++ = ' ';
+      s = std::to_chars(s, end, vertex_id(v)).ptr;
+      assertx(s < end - 4);
+    }
+    if (const char* sinfo = get_string(f)) {
+      *s++ = ' ';
+      *s++ = '{';
+      assertx(s + strlen(sinfo) + 4 < end);
+      while (*sinfo) *s++ = *sinfo++;
+      *s++ = '}';
+    }
+    *s++ = '\n';
+    *s = '\0';
+    assertx(os << buffer);
+  }
+
+  strcpy(buffer, "Edge ");
+  beg = buffer + strlen(buffer);
   for (Edge e : edges()) {
     const char* sinfo = get_string(e);
     if (!sinfo) continue;
-    os << "Edge " << vertex_id(vertex1(e)) << " " << vertex_id(vertex2(e)) << " {" << sinfo << "}\n";
-    assertx(os);
+    char* s = beg;
+    s = std::to_chars(s, end, vertex_id(vertex1(e))).ptr;
+    *s++ = ' ';
+    s = std::to_chars(s, end, vertex_id(vertex2(e))).ptr;
+    *s++ = ' ';
+    *s++ = '{';
+    assertx(s + strlen(sinfo) + 4 < end);
+    while (*sinfo) *s++ = *sinfo++;
+    *s++ = '}';
+    *s++ = '\n';
+    *s = '\0';
+    assertx(os << buffer);
   }
-  for (Face f : ordered_faces()) {
+
+  strcpy(buffer, "Corner ");
+  beg = buffer + strlen(buffer);
+  for (Face f : ar_faces) {
     for (Corner c : corners(f)) {
       const char* sinfo = get_string(c);
       if (!sinfo) continue;
-      os << "Corner " << vertex_id(corner_vertex(c)) << " " << face_id(f) << " {" << sinfo << "}\n";
-      assertx(os);
+      char* s = beg;
+      s = std::to_chars(s, end, vertex_id(corner_vertex(c))).ptr;
+      *s++ = ' ';
+      s = std::to_chars(s, end, face_id(f)).ptr;
+      *s++ = ' ';
+      *s++ = '{';
+      assertx(s + strlen(sinfo) + 4 < end);
+      while (*sinfo) *s++ = *sinfo++;
+      *s++ = '}';
+      *s++ = '\n';
+      *s = '\0';
+      assertx(os << buffer);
     }
   }
+#endif
   os.flush();
 }
 
@@ -633,9 +711,8 @@ void GMesh::collapse_edge_vertex(Edge e, Vertex vs) {
   int isbs = is_boundary(vs), isbt = is_boundary(vt), sumb = isbs + isbt;
   Point p = sumb == 0 || sumb == 2 ? Point(interp(point(vs), point(vt))) : isbs ? point(vs) : point(vt);
   Set<Vertex> vsharp;
-  for (Edge ee : edges(vt)) {
+  for (Edge ee : edges(vt))
     if (ee != e && flags(ee).flag(eflag_sharp)) vsharp.enter(opp_vertex(vt, ee));
-  }
   Mesh::collapse_edge_vertex(e, vs);  // vs is kept
   // e = nullptr;  // now undefined
   set_point(vs, p);  // (_os == nullptr)
@@ -653,6 +730,38 @@ void GMesh::collapse_edge_vertex(Edge e, Vertex vs) {
   }
 }
 
+void GMesh::collapse_edge_vertex_saving_attribs(Edge e, Vertex vs) {
+  Vertex v2 = opp_vertex(vs, e);
+  string str;
+  const bool v_has_corner_normals =
+      any_of(corners(vs), [&](Corner c) { return GMesh::string_has_key(get_string(c), "normal"); });
+  const bool v_has_corner_uvs =
+      any_of(corners(vs), [&](Corner c) { return GMesh::string_has_key(get_string(c), "uv"); });
+  Map<Face, string> face_normal;
+  Map<Face, string> face_uv;
+  if (v_has_corner_normals)
+    for (Corner c : corners(v2))
+      if (Face f = corner_face(c); f != face1(e) && f != face2(e))
+        if (const char* s = corner_key(str, c, "normal")) face_normal.enter(f, s);
+  if (v_has_corner_uvs)
+    for (Corner c : corners(v2))
+      if (Face f = corner_face(c); f != face1(e) && f != face2(e))
+        if (const char* s = corner_key(str, c, "uv")) face_uv.enter(f, s);
+  collapse_edge_vertex(e, vs);  // Vertex v2 is destroyed.
+  if (v_has_corner_normals) {
+    for (Corner c : corners(vs))
+      if (Face f = corner_face(c); face_normal.contains(f)) update_string(c, "normal", face_normal.get(f).c_str());
+  } else {
+    for (Corner c : corners(vs)) update_string(c, "normal", nullptr);
+  }
+  if (v_has_corner_uvs) {
+    for (Corner c : corners(vs))
+      if (Face f = corner_face(c); face_uv.contains(f)) update_string(c, "uv", face_uv.get(f).c_str());
+  } else {
+    for (Corner c : corners(vs)) update_string(c, "uv", nullptr);
+  }
+}
+
 void GMesh::collapse_edge(Edge e) { collapse_edge_vertex(e, vertex1(e)); }
 
 Vertex GMesh::split_edge(Edge e, int id) {
@@ -662,18 +771,16 @@ Vertex GMesh::split_edge(Edge e, int id) {
   Vertex v1 = vertex1(e), v2 = vertex2(e);
   Face f1 = face1(e), f2 = face2(e);
   Vertex vo1 = side_vertex1(e), vo2 = side_vertex2(e);
-  bool fle = flags(e).flag(eflag_sharp);
+  bool flag_e = flags(e).flag(eflag_sharp);
   auto fstring1 = make_unique_c_string(get_string(f1));  // often nullptr
   auto fstring2 = f2 ? make_unique_c_string(get_string(f2)) : nullptr;
   Vertex vn = Mesh::split_edge(e, id);
-  flags(edge(v1, vn)).flag(eflag_sharp) = fle;
-  flags(edge(v2, vn)).flag(eflag_sharp) = fle;
-  if (fstring1) {
+  flags(edge(v1, vn)).flag(eflag_sharp) = flag_e;
+  flags(edge(v2, vn)).flag(eflag_sharp) = flag_e;
+  if (fstring1)
     for (Face f : faces(edge(vn, vo1))) set_string(f, fstring1.get());
-  }
-  if (fstring2) {
+  if (fstring2)
     for (Face f : faces(edge(vn, vo2))) set_string(f, fstring2.get());
-  }
   set_point(vn, interp(point(v1), point(v2)));  // (_os == nullptr)
   if (tos) {
     _os = tos;
@@ -692,9 +799,8 @@ Edge GMesh::swap_edge(Edge e) {
   if (get_string(f1) && get_string(f2) && !strcmp(get_string(f1), get_string(f2)))
     fstring = make_unique_c_string(get_string(f1));
   Edge ne = Mesh::swap_edge(e);
-  if (fstring) {
+  if (fstring)
     for (Face f : faces(ne)) set_string(f, fstring.get());
-  }
   if (tos) {
     _os = tos;
     *_os << "Eswa " << vertex_id(v1) << ' ' << vertex_id(v2) << '\n';
@@ -723,61 +829,58 @@ Vertex GMesh::split_vertex(Vertex v1, Vertex vs1, Vertex vs2, int v2i) {
 }
 
 void GMesh::merge_vertices(Vertex vs, Vertex vt) {
-  if (_os) {
-    *_os << "Vmerge " << vertex_id(vs) << ' ' << vertex_id(vt) << '\n';
-  }
+  if (_os) *_os << "Vmerge " << vertex_id(vs) << ' ' << vertex_id(vt) << '\n';
   Mesh::merge_vertices(vs, vt);
 }
 
 Vertex GMesh::center_split_face(Face f) {
-  Polygon poly;
-  polygon(f, poly);
   auto fstring = make_unique_c_string(get_string(f));  // often nullptr
-  Map<Vertex, unique_ptr<char[]>> mvs;
+  Map<Vertex, string> mvs;
   for (Corner c : corners(f)) {
     Vertex v = corner_vertex(c);
-    if (get_string(c)) mvs.enter(v, extract_string(c));
+    if (const char* s = get_string(c)) mvs.enter(v, s);
   }
-  Vector scol(0.f, 0.f, 0.f);
-  bool have_col = true;
-  Vector snor(0.f, 0.f, 0.f);
-  bool have_nor = true;
-  UV suv(0.f, 0.f);
+  Polygon poly;
+  polygon(f, poly);
+  Vector sum_normal{};
+  bool have_normal = true;
+  Vector sum_rgb{};
+  bool have_rgb = true;
+  Uv sum_uv{};
   bool have_uv = true;
   for (Corner c : corners(f)) {
-    Vector n;
-    UV uv;
-    if (parse_corner_key_vec(c, "rgb", n))
-      scol += n;
+    if (Vector normal; parse_corner_key_vec(c, "normal", normal))
+      sum_normal += normal;
     else
-      have_col = false;
-    if (parse_corner_key_vec(c, "normal", n))
-      snor += n;
+      have_normal = false;
+    if (Vector rgb; parse_corner_key_vec(c, "rgb", rgb))
+      sum_rgb += rgb;
     else
-      have_nor = false;
-    if (parse_corner_key_vec(c, "uv", uv))
-      suv += uv;
+      have_rgb = false;
+    if (Uv uv; parse_corner_key_vec(c, "uv", uv))
+      sum_uv += uv;
     else
       have_uv = false;
   }
-  scol /= float(poly.num());
-  snor /= float(poly.num());
-  suv /= float(poly.num());
   Vertex vn = Mesh::center_split_face(f);
-  set_point(vn, centroid(poly));
+  set_point(vn, mean(poly));
   string str;
-  if (have_col) update_string(vn, "rgb", csform_vec(str, scol));
-  if (have_nor) update_string(vn, "normal", csform_vec(str, snor));
-  if (have_uv) update_string(vn, "uv", csform_vec(str, suv));
-  if (fstring) {
-    for (Face fn : faces(vn)) set_string(fn, fstring.get());
+  if (have_normal) {
+    sum_normal = normalized(sum_normal);
+    if (1) sum_normal = poly.get_normal();  // More useful.
+    update_string(vn, "normal", csform_vec(str, sum_normal));
   }
+  if (have_rgb) update_string(vn, "rgb", csform_vec(str, sum_rgb / float(poly.num())));
+  if (have_uv) update_string(vn, "uv", csform_vec(str, sum_uv / float(poly.num())));
+  if (fstring)
+    for (Face fn : faces(vn)) set_string(fn, fstring.get());
   if (mvs.num()) {
     for (Face fn : faces(vn)) {
       for (Corner cc : corners(fn)) {
         Vertex vv = corner_vertex(cc);
         if (vv == vn) continue;
-        if (mvs.contains(vv)) set_string(cc, std::move(mvs.get(vv)));  // may be nullptr
+        // Each original corner string should get assigned to two different corners.
+        if (mvs.contains(vv)) set_string(cc, mvs.get(vv).c_str());
       }
     }
   }
@@ -793,9 +896,8 @@ Edge GMesh::split_face(Face f, Vertex v1, Vertex v2) {
   }
   Edge en = Mesh::split_face(f, v1, v2);
   // f = nullptr;  // now undefined
-  if (fstring) {
+  if (fstring)
     for (Face ff : faces(en)) set_string(ff, fstring.get());
-  }
   if (mvs.num()) {
     for (Face ff : faces(en)) {
       for (Corner cc : corners(ff)) {
@@ -837,6 +939,11 @@ Array<Vertex> GMesh::fix_vertex(Vertex v) {
     set_point(vnew, point(v));
   }
   return new_vertices;
+}
+
+void GMesh::show_keys(Vertex v) const {
+  SHOW(v, get_string(v));
+  for (Corner c : corners(v)) SHOW(c, get_string(c));
 }
 
 }  // namespace hh

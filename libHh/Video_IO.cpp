@@ -1,8 +1,8 @@
 // -*- C++ -*-  Copyright (c) Microsoft Corporation; see license.txt
 #include "libHh/Video.h"
 
-// I actually get better read/write performance by directly calling Media Foundation, at least in Windows 7.
-// Generally, I prefer ffmpeg for its portability and quality.
+// We get better read/write performance by directly calling Media Foundation, at least in Windows 7.
+// But, use of ffmpeg is convenient for its portability and quality.
 
 #define HH_VIDEO_HAVE_MF      // unless disabled below
 #define HH_VIDEO_HAVE_FFMPEG  // always as fallback
@@ -20,6 +20,8 @@
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>  // required by Media Foundation; must appear before other headers.
 
+#pragma warning(disable : 5204 5246)  // for <mfapi.h>
+
 #include <VersionHelpers.h>  // IsWindows8OrGreater()
 #include <codecapi.h>        // CODECAPI_AVEncMPVGOPSize, etc.
 #include <mfapi.h>
@@ -32,7 +34,7 @@ HH_REFERENCE_LIB("mfreadwrite.lib");  // MFCreateSourceReaderFromByteStream()
 HH_REFERENCE_LIB("mfuuid.lib");       // MF_MT_DEFAULT_STRIDE
 HH_REFERENCE_LIB("ole32.lib");        // PropVariantClear()
 
-#include <mutex>  // std::once_flag, std::call_once()
+#include <mutex>  // once_flag, call_once()
 
 #include "libHh/windows_com.h"  // com_ptr<>
 
@@ -46,18 +48,19 @@ HH_REFERENCE_LIB("ole32.lib");        // PropVariantClear()
 
 //----------------------------------------------------------------------------
 
-#include <cstring>  // std::memcpy()
+#include <atomic>
+#include <cstring>  // memcpy()
 
 #include "libHh/ConsoleProgress.h"
 #include "libHh/FileIO.h"
-#include "libHh/StringOp.h"  // get_path_extension(), to_lower(), begins_with(), ends_with(), contains()
+#include "libHh/StringOp.h"  // get_path_extension(), to_lower(), starts_with(), ends_with(), contains()
 #include "libHh/Timer.h"
 #include "libHh/Vector4.h"
 
 //----------------------------------------------------------------------------
 
 // Notes on uncompressed/lossless video formats:
-// http://superuser.com/questions/347433/how-to-create-an-uncompressed-avi-from-a-series-of-1000s-of-png-images-using-ff
+// https://superuser.com/questions/347433/how-to-create-an-uncompressed-avi-from-a-series-of-1000s-of-png-images-using-ff
 // Consider 1280x720p 24fps Big Buck Bunny movie:
 // - uncompressed (V308 is the 8 bpc variant of V410; not supported in many viewers)  518 Mbps
 //   ffmpeg ...  -c:v v308 output.mov
@@ -69,10 +72,10 @@ HH_REFERENCE_LIB("ole32.lib");        // PropVariantClear()
 //                    29 Mbps for yuv422p, 43 Mbps with ultrafast
 //   ffmpeg ...  -c:v libx264 -qp 0 -pix_fmt yuv420p -f mp4 output.mp4
 
-// I choose "-c:v ffvhuff" because it allows a unique container suffix ("avi") that is distinct from the others.
-// I could use "-c:v ffvhuff -pix_fmt yuv420p" because it is compact and translates trivially to/from Nv12Video.
+// We choose "-c:v ffvhuff" because it allows a unique container suffix ("avi") that is distinct from the others.
+// We could use "-c:v ffvhuff -pix_fmt yuv420p" because it is compact and translates trivially to/from Nv12Video.
 // However, it is lossy like NV12.
-// Instead, I prefer "-c:v ffvhuff -pix_fmt yuv444p" which is lossless.
+// Instead, we prefer "-c:v ffvhuff -pix_fmt yuv444p" which is lossless.
 
 // An alternative would be to use lossless x264, still in an avi container?
 
@@ -91,7 +94,7 @@ void verify_attrib(Video::Attrib& attrib) {
 
 void Video::read_file(const string& filename) {
   // Similar code in: Video::read_file(), VideoNv12::read_file(), and FilterVideo.cpp::read_video().
-  HH_TIMER(_read_video);
+  HH_TIMER("_read_video");
   clear();
   RVideo rvideo(filename);
   attrib() = rvideo.attrib();
@@ -118,7 +121,7 @@ void Video::read_file(const string& filename) {
 }
 
 void Video::write_file(const string& filename) const {
-  HH_TIMER(_write_video);
+  HH_TIMER("_write_video");
   assertx(size());
   verify_attrib(const_cast<Video&>(*this).attrib());  // mutable
   string suffix = to_lower(get_path_extension(filename));
@@ -136,7 +139,7 @@ void Video::write_file(const string& filename) const {
 
 void VideoNv12::read_file(const string& filename, Video::Attrib* pattrib) {
   // Similar code in: Video::read_file(), VideoNv12::read_file(), and FilterVideo.cpp::read_video().
-  HH_TIMER(_read_video);
+  HH_TIMER("_read_video");
   clear();
   const bool use_nv12 = true;
   RVideo rvideo(filename, use_nv12);
@@ -164,7 +167,7 @@ void VideoNv12::read_file(const string& filename, Video::Attrib* pattrib) {
 }
 
 void VideoNv12::write_file(const string& filename, const Video::Attrib& pattrib) const {
-  HH_TIMER(_write_video);
+  HH_TIMER("_write_video");
   assertx(size());
   Video::Attrib attrib = pattrib;
   verify_attrib(attrib);
@@ -265,10 +268,8 @@ RVideo::RVideo(string filename, bool use_nv12) : _filename(std::move(filename)),
       throw std::runtime_error(
           sform("Peeked video format (c=%d) in pipe '%s' is not recognized", c, _filename.c_str()));
     // if (_attrib.suffix == "avi") _use_nv12 = false;  // must be done in caller
-    _tmpfile = make_unique<TmpFile>(_attrib.suffix);
+    _tmpfile = make_unique<TmpFile>(_attrib.suffix, fi());
     _filename = _tmpfile->filename();
-    WFile fi2(_filename);
-    fi2() << fi().rdbuf();  // copy the entire input stream to the temporary file
   }
   if (!file_exists(_filename)) throw std::runtime_error("Video file '" + _filename + "' does not exist");
   _attrib.suffix = to_lower(get_path_extension(_filename));
@@ -298,7 +299,7 @@ WVideo::WVideo(string filename, const Vec2<int>& spatial_dims, Video::Attrib att
       _pfilename(_filename) {
   if (_attrib.suffix == "") _attrib.suffix = to_lower(get_path_extension(_filename));
   if (_attrib.suffix == "")
-    throw std::runtime_error("Video '" + filename + "': no filename suffix specified for writing");
+    throw std::runtime_error("Video '" + _filename + "': no filename suffix specified for writing");
   if (file_requires_pipe(_filename)) {
     if (_filename == "-") my_setenv("NO_DIAGNOSTICS_IN_STDOUT", "1");
     _tmpfile = make_unique<TmpFile>(_attrib.suffix);
@@ -306,7 +307,7 @@ WVideo::WVideo(string filename, const Vec2<int>& spatial_dims, Video::Attrib att
   }
   if (!_attrib.bitrate) {
     Warning("Setting a high video bitrate");
-    _attrib.bitrate = 40 * 1000000;
+    _attrib.bitrate = 40'000'000;
   }
   _impl = Implementation::make(*this);
   if (getenv_bool("VIDEO_DEBUG")) SHOW(_impl->name());
@@ -314,11 +315,7 @@ WVideo::WVideo(string filename, const Vec2<int>& spatial_dims, Video::Attrib att
 
 WVideo::~WVideo() {
   _impl = nullptr;
-  if (_tmpfile) {
-    WFile fi(_pfilename);
-    RFile fi2(_filename);
-    fi() << fi2().rdbuf();  // copy the entire stream
-  }
+  if (_tmpfile) _tmpfile->write_to(WFile{_pfilename}());
 }
 
 void WVideo::write(CMatrixView<Pixel> frame) {
@@ -334,15 +331,15 @@ void WVideo::write(CNv12View frame) {
 //----------------------------------------------------------------------------
 // *** Video I/O
 
-#define AS(expr) assertx(SUCCEEDED(expr))
-
 //----------------------------------------------------------------------------
 // *** using Media Foundation
 #if defined(HH_VIDEO_HAVE_MF)
 
 // Supported Media Formats in Media Foundation
-// http://msdn.microsoft.com/en-us/library/dd757927%28VS.85%29.aspx
+// https://learn.microsoft.com/en-us/windows/win32/medfound/supported-media-formats-in-media-foundation
 // Containers: 3gp, asf, wma, wmv, aac, adts, avi, mp3, m4a, v4v, mov, mp4, sami, smi, wav
+
+#define AS(expr) assertx(SUCCEEDED(expr))
 
 namespace {
 
@@ -434,9 +431,9 @@ void retrieve_strided_Nv12(const uint8_t* pData, int stride, int offsetUV, Nv12V
 
 }  // namespace
 
-class MF_RVideo_Implementation : public RVideo::Implementation {
+class Mf_RVideo_Implementation : public RVideo::Implementation {
  public:
-  explicit MF_RVideo_Implementation(RVideo& rvideo) : RVideo::Implementation(rvideo) {
+  explicit Mf_RVideo_Implementation(RVideo& rvideo) : RVideo::Implementation(rvideo) {
     {
       com_ptr<IMFSourceResolver> pSourceResolver;
       AS(MFCreateSourceResolver(&pSourceResolver));
@@ -465,7 +462,7 @@ class MF_RVideo_Implementation : public RVideo::Implementation {
       AS(_pReader->GetPresentationAttribute(DWORD(MF_SOURCE_READER_MEDIASOURCE), MF_PD_DURATION, &var));
       assertx(var.vt == VT_UI8);
       ULONGLONG durationInHundredsOfNanoseconds = var.uhVal.QuadPart;
-      double TIME_HNS_TO_S_FACTOR = 10000000.;
+      double TIME_HNS_TO_S_FACTOR = 10'000'000.;
       duration = double(durationInHundredsOfNanoseconds) / TIME_HNS_TO_S_FACTOR;
       PropVariantClear(&var);
     }
@@ -518,7 +515,7 @@ class MF_RVideo_Implementation : public RVideo::Implementation {
       if (0) SHOW(dims, _stride);
     }
   }
-  ~MF_RVideo_Implementation() override {
+  ~Mf_RVideo_Implementation() override {
     // Note that _init_com_mf.~Initialize_COM_MF() is called after this destructor
   }
   string name() const override { return "mf"; }
@@ -533,7 +530,7 @@ class MF_RVideo_Implementation : public RVideo::Implementation {
     {
       LockIMFMediaBuffer lock(pBuffer);
       const uint8_t* pData = lock();
-      // The following fails on the mp4 I tried!
+      // The following fails in practice on an mp4.
       // com_ptr<IMF2DBuffer> p2Dbuf; AS(pBuffer->QueryInterface(IID_PPV_ARGS(&p2Dbuf)));
       // BYTE* pData; LONG lstride; AS(p2Dbuf->Lock2D(&pData, &lstride)); {
       if (!_impl_nv12) {
@@ -630,9 +627,9 @@ class MF_RVideo_Implementation : public RVideo::Implementation {
   int _stride;
 };
 
-class MF_WVideo_Implementation : public WVideo::Implementation {
+class Mf_WVideo_Implementation : public WVideo::Implementation {
  public:
-  explicit MF_WVideo_Implementation(WVideo& wvideo) : WVideo::Implementation(wvideo) {
+  explicit Mf_WVideo_Implementation(WVideo& wvideo) : WVideo::Implementation(wvideo) {
     const auto& attrib = _wvideo._attrib;
     if (attrib.audio.size()) Warning("MF_WVideo does not currently support audio");
     _impl_nv12 = attrib.suffix == "mp4";
@@ -658,10 +655,9 @@ class MF_WVideo_Implementation : public WVideo::Implementation {
     else
       throw std::runtime_error("Video: encoder suffix '" + attrib.suffix + "' not recognized");
     // See Tutorial: Using the Sink Writer to Encode Video (Windows)
-    //  http://msdn.microsoft.com/en-us/library/windows/desktop/ff819477%28v=vs.85%29.aspx
+    //  https://learn.microsoft.com/en-us/windows/win32/medfound/tutorial--using-the-sink-writer-to-encode-video
     // Color conversion bug:
-    // http://social.msdn.microsoft.com/Forums/en-US/mediafoundationdevelopment/thread/8a03ac4d-34a3-493d-b27e-5147de575fb7
-    // Use Color Converter DSP (http://msdn.microsoft.com/en-us/library/ff819079%28VS.85%29.aspx)
+    // Use Color Converter DSP (https://learn.microsoft.com/en-us/windows/win32/medfound/colorconverter)
     // See "Work around for XVP color conversion problem" in
     //   ~/git/CompPhoto/ClassLibs/VisionTools/src/fileio/MFVideoSrc.h
     {
@@ -719,7 +715,7 @@ class MF_WVideo_Implementation : public WVideo::Implementation {
     }
     AS(_pSinkWriter->BeginWriting());
   }
-  ~MF_WVideo_Implementation() override {
+  ~Mf_WVideo_Implementation() override {
     if (_pSinkWriter) AS(_pSinkWriter->Finalize());
     // Note that _init_com_mf.~Initialize_COM_MF() is called after this destructor
   }
@@ -811,14 +807,14 @@ class MF_WVideo_Implementation : public WVideo::Implementation {
 
 #else
 
-class MF_RVideo_Implementation : public Unsupported_RVideo_Implementation {
+class Mf_RVideo_Implementation : public Unsupported_RVideo_Implementation {
  public:
-  MF_RVideo_Implementation(RVideo& rvideo) : Unsupported_RVideo_Implementation(rvideo) {}
+  Mf_RVideo_Implementation(RVideo& rvideo) : Unsupported_RVideo_Implementation(rvideo) {}
   static bool supported() { return false; }
 };
-class MF_WVideo_Implementation : public Unsupported_WVideo_Implementation {
+class Mf_WVideo_Implementation : public Unsupported_WVideo_Implementation {
  public:
-  MF_WVideo_Implementation(WVideo& wvideo) : Unsupported_WVideo_Implementation(wvideo) {}
+  Mf_WVideo_Implementation(WVideo& wvideo) : Unsupported_WVideo_Implementation(wvideo) {}
   static bool supported() { return false; }
 };
 
@@ -840,19 +836,19 @@ class Ffmpeg_RVideo_Implementation : public RVideo::Implementation {
     // This prefix is necessary to get a correct frame count in the case of *.gif generated from ffmpeg.
     string prefix = ends_with(filename, ".gif") ? " -r 60 -vsync vfr" : "";
     {  // read header for dimensions and attributes (ignore video and audio data)
-      // 2>&1 works on both Unix bash shell and Windows cmd shell: http://stackoverflow.com/questions/1420965/
+      // 2>&1 works on both Unix bash shell and Windows cmd shell: https://stackoverflow.com/questions/1420965/
       // Ideally, <nul and/or </dev/null so that "vv ~/proj/fastloops/data/assembled_all_loops_uhd.mp4" does
       //  not stop responding.
       // Instead, use -nostdin .  Yes, it works.  Moreover, now do dup2(1, 0) in VideoViewer.
       //
-      // TODO: read and preserve metadata in video:  yes, likely also more robust way to read attributes below.
-      // http://stackoverflow.com/a/9473239/1190077:
-      //  http://www.ffmpeg.org/ffmpeg-formats.html#Metadata-1
+      // TODO: Read and preserve metadata in video:  yes, likely also more robust way to read attributes below.
+      // https://stackoverflow.com/a/9473239:
+      //  https://www.ffmpeg.org/ffmpeg-formats.html#Metadata-1
       // ffmpeg -i input_video -f ffmetadata metadata.txt
       // ffmpeg -i input_video -i ffmetadata.txt -map_metadata 1 -codec copy output_video
       // (BTW, ffmpeg supports multiple outputs: https://trac.ffmpeg.org/wiki/Creating%20multiple%20outputs
       //   ffmpeg -i input1 -i input2 -acodec ... -vcodec ... output1 -acodec ... -vcodec ... output2 )
-      // http://superuser.com/questions/349518/
+      // https://superuser.com/questions/349518/
       // ffmpeg -i video.mp4 -vn -acodec copy -metadata title="My Title" audio.m4a
       // ffmpeg -i ~/data/video/HDbrink8h.mp4 -f ffmetadata v.txt && cat v.txt
       // ;FFMETADATA1
@@ -861,71 +857,69 @@ class Ffmpeg_RVideo_Implementation : public RVideo::Implementation {
       // compatible_brands=mp41isom
       // encoder=Lavf56.4.101
       // Conclusion: not useful because already given in regular stdout of ffmpeg
-      // I could look at ffprobe to see if it can output more information, or use exiftool.
+      // We could look at ffprobe to see if it can output more information, or use exiftool.
       // Option "-nostdin" is unrecognized by older versions, but it can continue nonetheless.
       string s = "ffmpeg -nostdin" + prefix + " -i " + quote_arg_for_shell(filename) +
                  " -acodec copy -vcodec copy -f null - 2>&1 |";
       if (ldebug) SHOW(s);
       RFile fi(s);
       Vec3<int> dims{0, 0, 0};
-      double total_bitrate = 1000000.;  // a default value of 1Mbps
+      double total_bitrate = 1'000'000.;  // a default value of 1Mbps
       double video_bitrate = -1.;
       double framerate = -1.;
       bool yuv444p = false;
       int nlines = 0;
-      string sline;
-      while (my_getline(fi(), sline, false)) {
+      string line;
+      while (my_getline(fi(), line, false)) {
         nlines++;
-        if (ldebug) SHOW(sline);
+        if (ldebug) SHOW(line);
         char vch;
-        if (contains(sline, "Could not find option 'nostdin'")) {
+        if (contains(line, "Could not find option 'nostdin'")) {
           Warning("Version of external program 'ffmpeg' may be too old");
           continue;
         }
         {
-          auto i = sline.find(", bitrate:");
-          if (i != string::npos && !begins_with(sline.substr(i), ", bitrate: N/A")) {
-            assertx(sscanf(sline.c_str() + i, ", bitrate: %lg kb/%c", &total_bitrate, &vch) == 2 && vch == 's');
+          auto i = line.find(", bitrate:");
+          if (i != string::npos && !starts_with(line.substr(i), ", bitrate: N/A")) {
+            assertx(sscanf(line.c_str() + i, ", bitrate: %lg kb/%c", &total_bitrate, &vch) == 2 && vch == 's');
             total_bitrate *= 1000.;
           }
         }
-        if (contains(sline, "Stream #0:")) {
-          if (contains(sline, ": Video:") && !dims[2]) {
+        if (contains(line, "Stream #0:")) {
+          if (contains(line, ": Video:") && !dims[2]) {
             for (string::size_type i = 0;;) {
-              i = sline.find(',', i + 1);
+              i = line.find(',', i + 1);
               assertx(i != string::npos);
-              if (sscanf(sline.c_str() + i, ", %dx%d", &dims[2], &dims[1]) == 2) break;
+              if (sscanf(line.c_str() + i, ", %dx%d", &dims[2], &dims[1]) == 2) break;
             }
-            string::size_type i = sline.find(" kb/s");
+            string::size_type i = line.find(" kb/s");
             if (i != string::npos) {
-              i = sline.rfind(", ", i);
+              i = line.rfind(", ", i);
               if (i != string::npos) {
-                assertx(sscanf(sline.c_str() + i, ", %lg kb/%c", &video_bitrate, &vch) == 2 && vch == 's');
+                assertx(sscanf(line.c_str() + i, ", %lg kb/%c", &video_bitrate, &vch) == 2 && vch == 's');
                 video_bitrate *= 1000.;
               }
             }
-            i = sline.find(" fps");
+            i = line.find(" fps");
             if (i != string::npos) {
-              i = sline.rfind(", ", i);
+              i = line.rfind(", ", i);
               assertx(i != string::npos);
-              assertx(sscanf(sline.c_str() + i, ", %lg fp%c", &framerate, &vch) == 2 && vch == 's');
+              assertx(sscanf(line.c_str() + i, ", %lg fp%c", &framerate, &vch) == 2 && vch == 's');
             } else {
-              i = sline.find(" tbr");
+              i = line.find(" tbr");
               assertx(i != string::npos);
-              i = sline.rfind(", ", i);
+              i = line.rfind(", ", i);
               assertx(i != string::npos);
-              assertx(sscanf(sline.c_str() + i, ", %lg tb%c", &framerate, &vch) == 2 && vch == 'r');
+              assertx(sscanf(line.c_str() + i, ", %lg tb%c", &framerate, &vch) == 2 && vch == 'r');
             }
-            if (sline.find("yuv444p") != string::npos) yuv444p = true;
+            if (line.find("yuv444p") != string::npos) yuv444p = true;
             if (ldebug) SHOW(dims[2], dims[1], video_bitrate, framerate, yuv444p);
           }
-          if (contains(sline, ": Audio:") && contains(sline, "kb/s")) {
-            expect_audio = true;
-          }
+          if (contains(line, ": Audio:") && contains(line, "kb/s")) expect_audio = true;
         }
         {
-          string::size_type i = sline.rfind("frame=");
-          if (i != string::npos) assertx(sscanf(sline.c_str() + i, "frame=%d%c", &dims[0], &vch) == 2 && vch == ' ');
+          string::size_type i = line.rfind("frame=");
+          if (i != string::npos) assertx(sscanf(line.c_str() + i, "frame=%d%c", &dims[0], &vch) == 2 && vch == ' ');
         }
       }
       if (!nlines) throw std::runtime_error("ffmpeg is unable to read video file '" + filename + "'");
@@ -951,10 +945,10 @@ class Ffmpeg_RVideo_Implementation : public RVideo::Implementation {
       }
     }
     string pixfmt = _rvideo._use_nv12 ? "nv12" : "rgba";  // was rgb24
-    string scmd = ("ffmpeg -v panic -nostdin" + prefix + " -i " + quote_arg_for_shell(filename) +
-                   " -f image2pipe -pix_fmt " + pixfmt + " -vcodec rawvideo - |");
-    if (ldebug) SHOW(scmd);
-    _pfi = make_unique<RFile>(scmd);
+    string command = ("ffmpeg -v panic -nostdin" + prefix + " -i " + quote_arg_for_shell(filename) +
+                      " -f image2pipe -pix_fmt " + pixfmt + " -vcodec rawvideo - |");
+    if (ldebug) SHOW(command);
+    _pfi = make_unique<RFile>(command);
   }
   ~Ffmpeg_RVideo_Implementation() override = default;
   string name() const override { return "ffmpeg"; }
@@ -963,9 +957,7 @@ class Ffmpeg_RVideo_Implementation : public RVideo::Implementation {
     assertx(frame.dims() == sdims);
     if (!_rvideo._use_nv12) {
       if (!read_binary_raw((*_pfi)(), frame.array_view())) return false;
-      if (0) {
-        for_int(i, int(product(sdims))) frame.flat(i)[3] = 255;
-      }
+      if (0) for_int(i, int(product(sdims))) frame.flat(i)[3] = 255;
     } else {
       _ar_tmp.init(assert_narrow_cast<int>(product(sdims) + product(sdims) / 2));  // NV12
       if (!read_binary_raw((*_pfi)(), _ar_tmp)) return false;
@@ -1020,7 +1012,7 @@ class Ffmpeg_WVideo_Implementation : public WVideo::Implementation {
       assertx(filename != "-");  // WVideo::WVideo() should have created TmpFile if writing to stdout.
       // (Note that ffmpeg -f mp4 is not supported over pipe because it requires a seekable output;
       //  without -f, it actually uses avi as a default container, which doesn't match the mp4 file suffix.)
-      // At some point I managed to get Win7 Windows Media Player to play some type of file by creating an avi
+      // At some point we managed to get Win7 Windows Media Player to play some type of file by creating an avi
       //  container with a file suffix of mp4.  Not good for the long term.
       // if (attrib.suffix == "mp4") sfilecontainer = " -f avi";
       // Setting container should be unnecessary because it is derived automatically based on file suffix.
@@ -1061,12 +1053,12 @@ class Ffmpeg_WVideo_Implementation : public WVideo::Implementation {
         SHOW("Failed to write audio within video", ex.what());
       }
     }
-    string scmd =
+    string command =
         ("| ffmpeg -v panic -f rawvideo -vcodec rawvideo -pix_fmt " + ipixfmt +
          sform(" -s %dx%d -r %g", sdims[1], sdims[0], attrib.framerate) + " -i -" + str_audio + sfilecontainer +
          ocodec + " -pix_fmt " + opixfmt + sform(" -vb %d", attrib.bitrate) + " -y " + quote_arg_for_shell(filename));
-    if (ldebug) SHOW(scmd);
-    _pfi = make_unique<WFile>(scmd);
+    if (ldebug) SHOW(command);
+    _pfi = make_unique<WFile>(command);
   }
   ~Ffmpeg_WVideo_Implementation() override = default;
   string name() const override { return "ffmpeg"; }
@@ -1115,29 +1107,29 @@ unique_ptr<RVideo::Implementation> RVideo::Implementation::make(RVideo& rvideo) 
   //   e.g.:  RVIDEO_IMPLEMENTATION=mf Filtervideo ~/data/video/fewpalms.mp4 -stat
   string implementation = getenv_string("RVIDEO_IMPLEMENTATION");
   if (implementation == "") implementation = getenv_string("VIDEO_IMPLEMENTATION");
-  if (implementation == "mf") return make_unique<MF_RVideo_Implementation>(rvideo);
+  if (implementation == "mf") return make_unique<Mf_RVideo_Implementation>(rvideo);
   if (implementation == "ffmpeg") return make_unique<Ffmpeg_RVideo_Implementation>(rvideo);
   if (implementation != "") throw std::runtime_error("RVideo implementation '" + implementation + "' not recognized");
   if (Ffmpeg_RVideo_Implementation::supported()) return make_unique<Ffmpeg_RVideo_Implementation>(rvideo);
-  if (MF_RVideo_Implementation::supported()) return make_unique<MF_RVideo_Implementation>(rvideo);
+  if (Mf_RVideo_Implementation::supported()) return make_unique<Mf_RVideo_Implementation>(rvideo);
   throw std::runtime_error("Video I/O not implemented");
 }
 
 unique_ptr<WVideo::Implementation> WVideo::Implementation::make(WVideo& wvideo) {
   // Notes:
-  // - Win7 Media Foundation: I can set large bitrate on mp4, but do not see increase in file size.
+  // - Win7 Media Foundation: we can set a large bitrate on mp4, but do not see increase in file size.
   //   e.g.: VIDEO_IMPLEMENTATION=mf Filtervideo ~/data/video/fewpalms.mp4 -info -bitrate 32.84m -info -to mp4 | Filtervideo -stat
   // - ffmpeg: cannot write *.wmv using VC1 codec (instead resorts to msmpeg4v3).
   string implementation = getenv_string("WVIDEO_IMPLEMENTATION");
   if (implementation == "") implementation = getenv_string("VIDEO_IMPLEMENTATION");
-  if (implementation == "mf") return make_unique<MF_WVideo_Implementation>(wvideo);
+  if (implementation == "mf") return make_unique<Mf_WVideo_Implementation>(wvideo);
   if (implementation == "ffmpeg") return make_unique<Ffmpeg_WVideo_Implementation>(wvideo);
   if (implementation != "") throw std::runtime_error("WVideo implementation '" + implementation + "' not recognized");
   // Prefer ffmpeg, but revert to Windows Media Foundation (if available) for *.wmv output (using VC1 encoder).
-  if (wvideo._attrib.suffix == "wmv" && MF_WVideo_Implementation::supported())
-    return make_unique<MF_WVideo_Implementation>(wvideo);
+  if (wvideo._attrib.suffix == "wmv" && Mf_WVideo_Implementation::supported())
+    return make_unique<Mf_WVideo_Implementation>(wvideo);
   if (Ffmpeg_WVideo_Implementation::supported()) return make_unique<Ffmpeg_WVideo_Implementation>(wvideo);
-  if (MF_WVideo_Implementation::supported()) return make_unique<MF_WVideo_Implementation>(wvideo);
+  if (Mf_WVideo_Implementation::supported()) return make_unique<Mf_WVideo_Implementation>(wvideo);
   throw std::runtime_error("Video I/O not implemented");
 }
 

@@ -29,7 +29,7 @@ void principal_components(CArrayView<Vec3<float>> va, const Vec3<float>& avgp, F
   }
   Vec<float, n> val;
   for_int(i, n) val[i] = a[i][i];
-  SGrid<float, n, n> vec = {{1.f, 0.f, 0.f}, {0.f, 1.f, 0.f}, {0.f, 0.f, 1.f}};
+  SGrid<float, n, n> vec{{1.f, 0.f, 0.f}, {0.f, 1.f, 0.f}, {0.f, 0.f, 1.f}};
   for (int iter = 0;; iter++) {
     {
       float sum = 0.f;
@@ -89,7 +89,7 @@ void principal_components(CArrayView<Vec3<float>> va, const Vec3<float>& avgp, F
     if (!v) v = 1e-15f;  // very small but non-zero vector
     f.v(i) = v * vec[i];
   }
-  f.p() = Point(avgp[0], avgp[1], avgp[2]);
+  f.p() = avgp;
   f.make_right_handed();
 }
 
@@ -127,7 +127,7 @@ static void compute_eigenvectors(MatrixView<float> a, MatrixView<float> mo, Arra
   for_int(i, n) for_int(j, n) mo[i][j] = i == j ? 1.f : 0.f;
   for_int(i, n) eimag[i] = a[i][i];
   {
-    auto up_timer = n > 1000 ? make_unique<Timer>("__eigenv") : nullptr;
+    auto up_timer = n > 1000 ? make_unique<Timer>("__eigenv", Timer::EMode::abbrev) : nullptr;
     for (int iter = 0;; iter++) {
       {
         float sum = 0.f;
@@ -168,9 +168,7 @@ static void compute_eigenvectors(MatrixView<float> a, MatrixView<float> mo, Arra
   for_int(i, n) {
     if (eimag[i] < 0.f) {
       assertw(eimag[i] >= -1e-5f);
-      if (eimag[i] < -1e-5f) {
-        HH_SSTAT(Spca_negv, eimag[i]);
-      }
+      if (eimag[i] < -1e-5f) HH_SSTAT(Spca_negv, eimag[i]);
       eimag[i] = 0.f;
     }
   }
@@ -183,8 +181,8 @@ void principal_components(CMatrixView<float> mi, MatrixView<float> mo, ArrayView
   assertx(eimag.num() == n);
   Matrix<float> a(n, n);
   {
-    // HH_TIMER(_pca_cov);
-    auto up_timer = m * n > 10000 * 100 ? make_unique<Timer>("__pca_cov") : nullptr;
+    // HH_TIMER("_pca_cov");
+    auto up_timer = m * n > 10'000 * 100 ? make_unique<Timer>("__pca_cov", Timer::EMode::abbrev) : nullptr;
     if (1) {  // more cache-coherent
       Matrix<double> t(V(n, n), 0.);
       if (0) {  // unoptimized
@@ -257,7 +255,7 @@ void incr_principal_components(CMatrixView<float> mi, MatrixView<float> mo, Arra
   assertx(niter >= 1);
   assertx(eimag.num() == ne);
   //
-  auto up_timer = m * n > 10000 * 100 ? make_unique<Timer>("__pca_inc") : nullptr;
+  auto up_timer = m * n > 10'000 * 100 ? make_unique<Timer>("__pca_inc", Timer::EMode::abbrev) : nullptr;
   for_int(i, ne) for_int(c, n) mo[i][c] = mi[i][c];
   Array<float> vnorm(ne);
   for_int(i, ne) vnorm[i] = float(assertx(sqrt(mag2(mo[i]))));
@@ -320,7 +318,7 @@ void incr_principal_components(CMatrixView<float> mi, MatrixView<float> mo, Arra
 // %matrix
 // %[V,D]=ccipca(X,k) , Batch mode: take input matrix and number of
 // %eigenvector and return the eigenvector and eigenvalue
-// %[V,D]=ccipca(X,k,iteration,oldV,access) , Incremental mode: Take input matirx and
+// %[V,D]=ccipca(X,k,iteration,oldV,access) , Incremental mode: Take input matrix and
 // %number of eigenvector and number of iteration, and the old eigenvector
 // %matrix, return the eigenvector and eigenvalue matrix
 // %
@@ -339,7 +337,7 @@ void incr_principal_components(CMatrixView<float> mi, MatrixView<float> mo, Arra
 // %OUTPUT
 // %V --- Eigenvector matrix, column-wise
 // %D --- Diagonal matrix of eigenvalue
-// %n --- Updating occurance
+// %n --- Updating occurrence
 //
 //   [datadim, samplenum] = size(X);
 //

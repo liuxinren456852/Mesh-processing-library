@@ -6,42 +6,49 @@
   <PropertyGroup>
     <_PropertySheetDisplayName>hhmain</_PropertySheetDisplayName>
   </PropertyGroup>
-  <!-- See MSBuild Conditions: http://msdn.microsoft.com/en-us/library/7szfhaft.aspx -->
+  <PropertyGroup>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <!-- See MSBuild Conditions: https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-conditions -->
   <PropertyGroup Condition="'$(LocalRoot)'==''">
-   <LocalRoot>..</LocalRoot> <!-- default; most of my projects live in an immediate subfolder -->
+    <LocalRoot>..</LocalRoot> <!-- default; most of my projects live in an immediate subfolder -->
   </PropertyGroup>
   <PropertyGroup Condition="'$(MeshRoot)'==''">
-   <MeshRoot>$(LocalRoot)</MeshRoot>
+    <MeshRoot>$(LocalRoot)</MeshRoot>
   </PropertyGroup>
   <PropertyGroup Condition="'$(ExeRoot)'==''">
-   <ExeRoot>$(LocalRoot)</ExeRoot>
+    <ExeRoot>$(LocalRoot)</ExeRoot>
   </PropertyGroup>
   <PropertyGroup>
     <IntDir>$(Platform)\$(Configuration)\</IntDir>
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
-     <PreprocessorDefinitions>HH_NO_IMAGE_IO;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>HH_NO_IMAGE_IO;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'false'=='true'">
     <ClCompile>
-     <PreprocessorDefinitions>HH_IMAGE_IO_TOO;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>HH_IMAGE_IO_TOO;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemDefinitionGroup>
   <!-- base properties -->
   <ItemDefinitionGroup>
     <ClCompile>
       <WarningLevel>Level4</WarningLevel>
-      <AdditionalIncludeDirectories>$(MeshRoot);$(MeshRoot)\libHWin;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(MeshRoot);$(MeshRoot)\libHwWindows;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>HH_NO_LAPACK;_CRT_SECURE_NO_WARNINGS;_SCL_SECURE_NO_WARNINGS;_CRT_NONSTDC_NO_DEPRECATE;_CRT_DECLARE_NONSTDC_NAMES;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <FloatingPointModel>Fast</FloatingPointModel>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <OpenMPSupport>true</OpenMPSupport>
+      <!-- <OpenMPSupport>true</OpenMPSupport> -->
       <UseFullPaths>true</UseFullPaths>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <TreatWarningAsError>true</TreatWarningAsError>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <!-- Warning C6319: Use of the comma-operator in a tested expression causes the left argument to be ignored when it has no side-effects -->
+      <DisableSpecificWarnings Condition="'$(VisualStudioVersion)'&gt;='17.0'">6319</DisableSpecificWarnings>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -67,7 +74,7 @@
       <!-- <EnableEnhancedInstructionSet>AdvancedVectorExtensions2</EnableEnhancedInstructionSet> -->
     </ClCompile>
     <Link>
-     <!-- #pragma referenced: mkl_intel_lp64_dll.lib mkl_intel_thread_dll.lib mkl_core_dll.lib libiomp5md.lib -->
+      <!-- #pragma referenced: mkl_intel_lp64_dll.lib mkl_intel_thread_dll.lib mkl_core_dll.lib libiomp5md.lib -->
     </Link>
   </ItemDefinitionGroup>
   <!-- Release properties -->
@@ -135,3 +142,8 @@
   </ItemDefinitionGroup>
   -->
 </Project>
+<!-- For Emacs:
+     Local Variables:
+     nxml-child-indent: 2
+     End:
+-->

@@ -63,9 +63,8 @@ Point Combvh::evaluate(const GMesh& mesh) const {
 // *** Mvcvh
 
 bool Mvcvh::is_convolution() const {
-  for (const Combvh& comb : values()) {
+  for (const Combvh& comb : values())
     if (!is_zero(comb.h)) return false;
-  }
   return true;
 }
 
@@ -81,9 +80,7 @@ Combvh Mvcvh::compose_c(const Combvh& ci) const {
       co.c[v] += val;
     } else {
       co.h += comb.h * val;
-      if (comb.c.num()) {
-        for_combination(comb.c, [&](Vertex v2, float val2) { co.c[v2] += val2 * val; });
-      }
+      if (comb.c.num()) for_combination(comb.c, [&](Vertex v2, float val2) { co.c[v2] += val2 * val; });
     }
   });
   return co;
@@ -92,7 +89,7 @@ Combvh Mvcvh::compose_c(const Combvh& ci) const {
 // this=mconv*this
 void Mvcvh::compose(const Mvcvh& mconv) {
   Mvcvh nthis;
-  for_map_key_value(mconv, [&](Vertex v, const Combvh& comb) {
+  for (auto& [v, comb] : mconv) {
     assertx(is_zero(comb.h));
     if (!comb.c.num()) {
       // identity assumed, keep unchanged
@@ -104,7 +101,7 @@ void Mvcvh::compose(const Mvcvh& mconv) {
       if (debug()) assertx(ncomb.is_combination());
       nthis.enter(v, std::move(ncomb));
     }
-  });
+  }
   // swap(*this, nthis) is wrong because nthis only has entries for changed vertices.
   while (!nthis.empty()) {
     Vertex v = nthis.get_one_key();
@@ -150,9 +147,8 @@ SubMesh::SubMesh(GMesh& pmesh) : _omesh(pmesh) {
   }
   for (Vertex v : _m.vertices()) {
     int nsharpe = 0;
-    for (Edge e : _m.edges(v)) {
+    for (Edge e : _m.edges(v))
       if (sharp(e)) nsharpe++;
-    }
     vinfo(v).nume = _m.degree(v);
     vinfo(v).numsharpe = nsharpe;
   }
@@ -231,7 +227,7 @@ void SubMesh::subdivide_aux(float cosang, Mvcvh* pmconv) {
     unique_ptr<Mvcvh> tmconv = !pmconv ? make_unique<Mvcvh>() : nullptr;
     Mvcvh& mconv = pmconv ? *pmconv : *tmconv;
     if (cosang < .99999f) {
-      // udpate geometry so that EdgeDihedralCos makes sense
+      // Update geometry so that EdgeDihedralCos makes sense.
       update_vertex_positions();
       _selrefine = true;
       selectively_refine(mconv, cosang);
@@ -254,10 +250,8 @@ void SubMesh::subdivide_aux(float cosang, Mvcvh* pmconv) {
 void SubMesh::refine(Mvcvh& mconv) {
   // Save current mesh objects for later iteration
   // Array<Vertex> arv; for (Vertex v : _m.vertices()) arv += v;
-  Array<Face> arf;
-  for (Face f : _m.ordered_faces()) arf.push(f);
-  Array<Edge> are;
-  for (Edge e : _m.edges()) are.push(e);
+  Array<Face> arf(_m.ordered_faces());
+  Array<Edge> are(_m.edges());
   Map<Edge, Vertex> menewv;
   // Create new vertices and make them midpoints of old edges
   for (Edge e : are) {  // was ForStack which went in reverse order
@@ -308,23 +302,23 @@ void SubMesh::refine(Mvcvh& mconv) {
         ar.push(fn);
       }
       if (has_uv) {
-        Vec4<UV> uva;
+        Vec4<Uv> uva;
         Face* fna = &ar[unsigned(ar.num()) - 4];  // unsigned to avoid -Werror=strict-overflow
         for_int(i, 4) {
           Corner c = _m.corner(va[i], f);
-          UV& uv = uva[i];
+          Uv& uv = uva[i];
           assertx(_m.parse_corner_key_vec(c, "uv", uv));
           c = _m.corner(va[i], fna[i]);
           _m.update_string(c, "uv", csform_vec(str, uv));
         }
         for_int(i, 4) {
-          UV uv = interp(uva[i], uva[(i + 1) % 4]);
+          Uv uv = interp(uva[i], uva[(i + 1) % 4]);
           for_int(j, 2) {
             Corner cc = _m.corner(vs[i], fna[(i + j) % 4]);
             _m.update_string(cc, "uv", csform_vec(str, uv));
           }
         }
-        UV uv = interp(interp(uva[0], uva[1]), interp(uva[2], uva[3]));
+        Uv uv = mean(uva);
         _m.update_string(vc, "uv", csform_vec(str, uv));
       }
       if (has_imagen) {
@@ -347,13 +341,11 @@ void SubMesh::refine(Mvcvh& mconv) {
         for (Corner c : _m.corners(vc)) _m.update_string(c, "imagen", csform(str, "%d", inc));
       }
     }
-    if (has_imagen) {
+    if (has_imagen)
       for (Vertex v : _m.vertices()) _m.update_string(v, "imagen", nullptr);
-    }
   } else {
     for (Face f : arf) {  // was ForStack which went in reverse order
-      Vec3<Vertex> va;
-      _m.triangle_vertices(f, va);
+      Vec3<Vertex> va = _m.triangle_vertices(f);
       Vec3<Vertex> vs;
       for_int(i, 3) vs[i] = menewv.get(_m.edge(va[i], va[mod3(i + 1)]));
       Face forig = _mforigf.get(f);
@@ -364,7 +356,7 @@ void SubMesh::refine(Mvcvh& mconv) {
         _mfindex.enter(fn, ar.num());
         ar.push(fn);
       }
-      Face fn = _m.create_face(vs[0], vs[1], vs[2]);
+      Face fn = _m.create_face(vs);
       _mforigf.enter(fn, forig);
       _mfindex.enter(fn, ar.num());
       ar.push(fn);
@@ -393,21 +385,18 @@ void SubMesh::selectively_refine(Mvcvh& mconv, float cosang) {
   // See also Filtermesh.cpp:do_silsubdiv()
   assertx(!_isquad);
   // _mforigf, _mfindex, and _mofif are not supported with this scheme!
-  Array<Face> arf;
-  for (Face f : _m.faces()) arf.push(f);
+  Array<Face> arf(_m.faces());
   // Determine which edges will be subdivided
   Set<Edge> subde;  // edges to subdivide
-  for (Edge e : _m.edges()) {
+  for (Edge e : _m.edges())
     if (sharp(e) || edge_dihedral_angle_cos(_m, e) <= cosang) subde.enter(e);
-  }
   Queue<Face> queuef;
   for (Face f : arf) queuef.enqueue(f);
   while (!queuef.empty()) {
     Face f = queuef.dequeue();
     int nnew = 0;
-    for (Edge e : _m.edges(f)) {
+    for (Edge e : _m.edges(f))
       if (subde.contains(e)) nnew++;
-    }
     if (nnew != 2) continue;  // ok, no propagating changes
     for (Edge e : _m.edges(f)) {
       if (!subde.add(e)) continue;
@@ -449,8 +438,7 @@ void SubMesh::selectively_refine(Mvcvh& mconv, float cosang) {
   // Subdivide faces, destroys validity of flags(e)
   for (Face f : arf) {
     int nnew = 0, i0 = -1;
-    Vec3<Vertex> va;
-    _m.triangle_vertices(f, va);
+    Vec3<Vertex> va = _m.triangle_vertices(f);
     Vec3<Vertex> vs;
     for_int(i, 3) {
       Edge e = _m.edge(va[i], va[mod3(i + 1)]);
@@ -471,21 +459,20 @@ void SubMesh::selectively_refine(Mvcvh& mconv, float cosang) {
       _m.create_face(vs[i0], va[i1], va[i2]);
     } else {
       for_int(i, 3) _m.create_face(va[i], vs[i], vs[mod3(i + 2)]);
-      _m.create_face(vs[0], vs[1], vs[2]);
+      _m.create_face(vs);
     }
   }
-  for_map_key_value(mvvnewv, [&](const Svv& vv, const Snvf& nvf) {
+  for (auto& [vv, nvf] : mvvnewv) {
     if (nvf.eflags) {
       _m.flags(_m.edge(nvf.vnew, vv._v1)) = nvf.eflags;
       _m.flags(_m.edge(nvf.vnew, vv._v2)) = nvf.eflags;
     }
-  });
+  }
   if (1) {  // need to fix up some values
     for (Vertex v : _m.vertices()) {
       int nsharpe = 0;
-      for (Edge e : _m.edges(v)) {
+      for (Edge e : _m.edges(v))
         if (sharp(e)) nsharpe++;
-      }
       vinfo(v).nume = _m.degree(v);
       vinfo(v).numsharpe = nsharpe;
     }
@@ -694,8 +681,6 @@ void SubMesh::limit_mask(Vertex v, Combvh& comb) const {
 
 void SubMesh::triangulate_quads(Mvcvh& mconv) {
   assertx(_isquad);
-  Array<Face> arf;
-  for (Face f : _m.ordered_faces()) arf.push(f);
   for (Edge e : _m.edges()) assertx(!_m.flags(e));
   if (0) {
     for (Vertex v : _m.vertices()) {
@@ -704,7 +689,7 @@ void SubMesh::triangulate_quads(Mvcvh& mconv) {
       mconv.enter(v, std::move(comb));
     }
   }
-  for (Face f : arf) {  // was ForStack which went in reverse order
+  for (Face f : Array<Face>(_m.ordered_faces())) {
     Face forig = _mforigf.remove(f);
     _mfindex.remove(f);  // can be index 0
     Vertex v = _m.center_split_face(f);
@@ -751,7 +736,7 @@ void SubMesh::orig_face_index(Face fi, Face& of, int& pindex) const {
 }
 
 Face SubMesh::get_face(Face of, int index) const {
-  const Array<Face>& ar = _mofif.get(of);
+  CArrayView<Face> ar = _mofif.get(of);
   return ar[index];
 }
 
@@ -759,12 +744,12 @@ Face SubMesh::get_face(Face of, int index) const {
 
 void SubMesh::show_mvcvh(const Mvcvh& mvcvh) const {
   showf("Mvcvh = {\n");
-  for_map_key_value(mvcvh, [&](Vertex v, const Combvh& comb) {
+  for (auto& [v, comb] : mvcvh) {
     showf(" vertex %d {\n", _m.vertex_id(v));
     showf("  h[3]=%g\n", comb.h[3]);
     for_combination(comb.c, [&](Vertex vv, float val) { showf("  v%-4d  %g\n", _m.vertex_id(vv), val); });
     showf(" }\n");
-  });
+  }
   showf("}\n");
 }
 

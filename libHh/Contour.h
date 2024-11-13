@@ -12,21 +12,20 @@
 
 #if 0
 {
-  auto func_eval = [](const Vec3<float>& p) {
+  const auto func_eval = [](const Vec3<float>& p) {
     return p[0] < .3f ? k_Contour_undefined : dist(p, Point(.6f, .6f, .6f)) - .4f;
   };
   if (1) {
     GMesh mesh;
-    Contour3DMesh<decltype(func_eval)> contour(50, &mesh, func_eval);
+    Contour3DMesh contour(50, &mesh, func_eval);
     contour.march_near(Point(.9f, .6f, .6f));
     mesh.write(std::cout);
   } else {
     struct func_contour {
-      void operator()(const Array<Vec3<float>>&){...};
+      void operator()(CArrayView<Vec3<float>>){...};
     };
-    auto func_border = [](const Array<Vec3<float>>&) { ... };
-    Contour3D<decltype(func_eval), func_contour, decltype(func_border)> contour(50, func_eval, func_contour(),
-                                                                                func_border);
+    const auto func_border = [](CArrayView<Vec3<float>>) { ... };
+    Contour3D contour(50, func_eval, func_contour(), func_border);
     contour.march_from(Point(.9f, .6f, .6f));
   }
 }
@@ -39,7 +38,7 @@ namespace hh {
 //   - surface triangle stream in the unit cube (Contour3D)
 //   - curve polyline stream in the unit square (Contour2D)
 
-// TODO: improving efficiency/generality:
+// TODO: Improve efficiency/generality:
 // - use 64-bit encoding to allow larger grid sizes.
 // - perhaps distinguish  Set<unsigned> cubes_visited and  Map<unsigned, Node>  cube_vertices? and edge_vertices too?
 // - somehow remove _en from Node?
@@ -61,9 +60,9 @@ template <int D, typename VertexData = Vec0<int>> class ContourBase {
   static constexpr float k_not_yet_evaled = BIGFLOAT;
   using DPoint = Vec<float, D>;  // domain point
   using IPoint = Vec<int, D>;    // grid point
-  static_assert(D == 2 || D == 3, "");
+  static_assert(D == 2 || D == 3);
   static constexpr int k_max_gn = D == 3 ? 1024 : 65536;  // bits/coordinate == 10 for 3D, 16 for 2D (max 32 bits)
-  explicit ContourBase(int gn) : _gn(gn), _gni(1.f / gn) {
+  explicit ContourBase(int gridn_) : _gn(gridn_), _gni(1.f / gridn_) {
     assertx(_gn > 0);
     assertx(_gn < k_max_gn);  // must leave room for [0 ... _gn] inclusive
     set_vertex_tolerance(_vertex_tol);
@@ -72,10 +71,10 @@ template <int D, typename VertexData = Vec0<int>> class ContourBase {
     assertx(_queue.empty());
     if (_os) {
       *_os << sform("%sMarch:\n", g_comment_prefix_string);
-      *_os << sform("%svisited %d cubes (%d were undefined, %d contained nothing)\n", g_comment_prefix_string,
-                    _ncvisited, _ncundef, _ncnothing);
-      *_os << sform("%sevaluated %d vertices (%d were zero, %d were undefined)\n", g_comment_prefix_string, _nvevaled,
-                    _nvzero, _nvundef);
+      *_os << sform("%svisited %d cubes (%d were undefined, %d contained nothing)\n",  //
+                    g_comment_prefix_string, _ncvisited, _ncundef, _ncnothing);
+      *_os << sform("%sevaluated %d vertices (%d were zero, %d were undefined)\n",  //
+                    g_comment_prefix_string, _nvevaled, _nvzero, _nvundef);
       *_os << sform("%sencountered %d tough edges\n", g_comment_prefix_string, _nedegen);
     }
   }
@@ -177,8 +176,8 @@ template <int D, typename VertexData = Vec0<int>> class ContourBase {
 
 // *** Contour3D
 
-struct Contour3D_NoBorder {  // special type to indicate that no border ouput is desired
-  float operator()(const Array<Vec3<float>>&) const {
+struct Contour3D_NoBorder {  // special type to indicate that no border output is desired
+  float operator()(CArrayView<Vec3<float>>) const {
     assertnever_ret("");
     return 0.f;
   }
@@ -225,29 +224,29 @@ class Contour3DBase : public ContourBase<3, VertexData> {
  protected:
   Eval _eval;
   Border _border;
-  static constexpr bool b_no_border = std::is_same<Border, Contour3D_NoBorder>::value;
+  static constexpr bool b_no_border = std::is_same_v<Border, Contour3D_NoBorder>;
   using Node222 = SGrid<Node*, 2, 2, 2>;
   using base::k_not_yet_evaled;
   //
   unsigned encode(const IPoint& ci) const {
-    static_assert(k_max_gn <= 1024, "");
+    static_assert(k_max_gn <= 1024);
     return (((unsigned(ci[0]) << 10) | unsigned(ci[1])) << 10) | unsigned(ci[2]);
   }
   IPoint decode(unsigned en) const {
-    static_assert(k_max_gn <= 1024, "");
+    static_assert(k_max_gn <= 1024);
     return IPoint(narrow_cast<int>(en >> 20), narrow_cast<int>((en >> 10) & ((1u << 10) - 1)),
                   narrow_cast<int>(en & ((1u << 10) - 1)));
   }
   int march_from_i(const DPoint& startp) {
     for_int(d, D) ASSERTX(startp[d] >= 0.f && startp[d] <= 1.f);
     IPoint cc;
-    for_int(d, D) cc[d] = min(static_cast<int>(startp[d] * _gn), _gn - 1);
+    for_int(d, D) cc[d] = min(int(startp[d] * _gn), _gn - 1);
     return march_from_aux(cc);
   }
   int march_near_i(const DPoint& startp) {
     for_int(d, D) ASSERTX(startp[d] >= 0.f && startp[d] <= 1.f);
     IPoint cc;
-    for_int(d, D) cc[d] = min(static_cast<int>(startp[d] * _gn), _gn - 1);
+    for_int(d, D) cc[d] = min(int(startp[d] * _gn), _gn - 1);
     int ret = 0;
     IPoint ci;
     for_intL(i, -1, 2) {
@@ -329,8 +328,8 @@ class Contour3DBase : public ContourBase<3, VertexData> {
       cd[d] = i ? 1 : -1;
       cd[d1] = cd[d2] = 0;
       IPoint ci = cc + cd;  // indices of node for neighboring cube;
-      // note: vmin < 0 since 0 is arbitrarily taken to be positive
-      if (vmax != k_Contour_undefined && vmin < 0 && vmax >= 0 && cube_inbounds(ci)) {
+      // note: vmin < 0.f since 0.f is arbitrarily taken to be positive
+      if (vmax != k_Contour_undefined && vmin < 0.f && vmax >= 0.f && cube_inbounds(ci)) {
         unsigned en = encode(ci);
         bool is_new;
         Node* n2 = const_cast<Node*>(&_m.enter(Node(en), is_new));
@@ -390,21 +389,19 @@ class Contour3DMesh : public Contour3DBase<VertexData3DMesh, Contour3DMesh<Eval,
         // Gather 4 cube vertices in a consistent order
         for (cd[d1] = 0; cd[d1] < 2; cd[d1]++) {
           int sw = cd[d] ^ cd[d1];  // 0 or 1
-          for (cd[d2] = sw; cd[d2] == 0 || cd[d2] == 1; cd[d2] += (sw ? -1 : 1)) {
-            naf[i++] = na[cd[0]][cd[1]][cd[2]];
-          }
+          for (cd[d2] = sw; cd[d2] == 0 || cd[d2] == 1; cd[d2] += (sw ? -1 : 1)) naf[i++] = na[cd[0]][cd[1]][cd[2]];
         }
       }
       int nneg = 0;
       double sumval = 0.;
       for_int(i, 4) {
         float val = naf[i]->_val;
-        if (val < 0) nneg++;
+        if (val < 0.f) nneg++;
         sumval += val;  // If pedantic, could sort the vals before summing.
       }
       for_int(i, 4) {
         int i1 = mod4(i + 1), i2 = mod4(i + 2), i3 = mod4(i + 3);
-        if (!(naf[i]->_val < 0 && naf[i1]->_val >= 0)) continue;
+        if (!(naf[i]->_val < 0.f && naf[i1]->_val >= 0.f)) continue;
         // have start of edge
         ASSERTX(nneg >= 1 && nneg <= 3);
         int ie;  // end of edge
@@ -412,9 +409,9 @@ class Contour3DMesh : public Contour3DBase<VertexData3DMesh, Contour3DMesh<Eval,
           ie = i3;
         } else if (nneg == 3) {
           ie = i1;
-        } else if (naf[i2]->_val >= 0) {
+        } else if (naf[i2]->_val >= 0.f) {
           ie = i2;
-        } else if (sumval < 0) {
+        } else if (sumval < 0.) {
           ie = i1;
         } else {
           ie = i3;
@@ -479,7 +476,7 @@ class Contour3DMesh : public Contour3DBase<VertexData3DMesh, Contour3DMesh<Eval,
   }
 };
 
-template <typename Eval = float(const Vec3<float>&), typename Contour = float(const Array<Vec3<float>>&),
+template <typename Eval = float(const Vec3<float>&), typename Contour = float(CArrayView<Vec3<float>>),
           typename Border = Contour3D_NoBorder>
 class Contour3D : public Contour3DBase<Vec0<int>, Contour3D<Eval, Contour, Border>, Eval, Border> {
   using base = Contour3DBase<Vec0<int>, Contour3D<Eval, Contour, Border>, Eval, Border>;
@@ -513,15 +510,15 @@ class Contour3D : public Contour3DBase<Vec0<int>, Contour3D<Eval, Contour, Borde
   void contour_tetrahedron(Vec4<Node*> n4) {
     int nposi = 0;
     for_int(i, 4) {
-      if (n4[i]->_val >= 0) nposi++;
+      if (n4[i]->_val >= 0.f) nposi++;
     }
     if (nposi == 0 || nposi == 4) return;
     for (int i = 0, j = 3; i < j;) {
-      if (n4[i]->_val >= 0) {
+      if (n4[i]->_val >= 0.f) {
         i++;
         continue;
       }
-      if (n4[j]->_val < 0) {
+      if (n4[j]->_val < 0.f) {
         --j;
         continue;
       }
@@ -556,14 +553,14 @@ class Contour3D : public Contour3DBase<Vec0<int>, Contour3D<Eval, Contour, Borde
 
 // *** Contour2D
 
-struct Contour2D_NoBorder {  // special type to indicate that no border ouput is desired
-  float operator()(const Array<Vec2<float>>&) const {
+struct Contour2D_NoBorder {  // special type to indicate that no border output is desired
+  float operator()(CArrayView<Vec2<float>>) const {
     if (1) assertnever("");
     return 0.f;
   }
 };
 
-template <typename Eval = float(const Vec2<float>&), typename Contour = void(const Array<Vec2<float>>&),
+template <typename Eval = float(const Vec2<float>&), typename Contour = void(CArrayView<Vec2<float>>),
           typename Border = Contour2D_NoBorder>
 class Contour2D : public ContourBase<2> {
   static constexpr int D = 2;
@@ -582,28 +579,28 @@ class Contour2D : public ContourBase<2> {
   Eval _eval;
   Contour _contour;
   Border _border;
-  static constexpr bool b_no_border = std::is_same<Border, Contour2D_NoBorder>::value;
+  static constexpr bool b_no_border = std::is_same_v<Border, Contour2D_NoBorder>;
   using Node22 = SGrid<Node*, 2, 2>;
   using base::k_not_yet_evaled;
   //
   unsigned encode(const IPoint& ci) const {
-    static_assert(k_max_gn <= 65536, "");
+    static_assert(k_max_gn <= 65536);
     return (unsigned(ci[0]) << 16) | unsigned(ci[1]);
   }
   IPoint decode(unsigned en) const {
-    static_assert(k_max_gn <= 65536, "");
+    static_assert(k_max_gn <= 65536);
     return IPoint(narrow_cast<int>(en >> 16), narrow_cast<int>(en & ((1u << 16) - 1)));
   }
   int march_from_i(const DPoint& startp) {
     for_int(d, D) ASSERTX(startp[d] >= 0.f && startp[d] <= 1.f);
     IPoint cc;
-    for_int(d, D) cc[d] = min(static_cast<int>(startp[d] * _gn), _gn - 1);
+    for_int(d, D) cc[d] = min(int(startp[d] * _gn), _gn - 1);
     return march_from_aux(cc);
   }
   int march_near_i(const DPoint& startp) {
     for_int(d, D) ASSERTX(startp[d] >= 0.f && startp[d] <= 1.f);
     IPoint cc;
-    for_int(d, D) cc[d] = min(static_cast<int>(startp[d] * _gn), _gn - 1);
+    for_int(d, D) cc[d] = min(int(startp[d] * _gn), _gn - 1);
     int ret = 0;
     IPoint ci;
     for_intL(i, -1, 2) {
@@ -683,8 +680,8 @@ class Contour2D : public ContourBase<2> {
       cd[d] = i ? 1 : -1;
       cd[d1] = 0;
       IPoint ci = cc + cd;  // indices of node for neighboring cube;
-      // note: vmin < 0 since 0 is arbitrarily taken to be positive
-      if (vmax != k_Contour_undefined && vmin < 0 && vmax >= 0 && cube_inbounds(ci)) {
+      // note: vmin < 0.f since 0.f is arbitrarily taken to be positive
+      if (vmax != k_Contour_undefined && vmin < 0.f && vmax >= 0.f && cube_inbounds(ci)) {
         unsigned en = encode(ci);
         bool is_new;
         Node* n = const_cast<Node*>(&_m.enter(Node(en), is_new));
@@ -708,15 +705,15 @@ class Contour2D : public ContourBase<2> {
   void contour_triangle(Vec3<Node*> n3) {
     int nposi = 0;
     for_int(i, 3) {
-      if (n3[i]->_val >= 0) nposi++;
+      if (n3[i]->_val >= 0.f) nposi++;
     }
     if (nposi == 0 || nposi == 3) return;
     for (int i = 0, j = 2; i < j;) {
-      if (n3[i]->_val >= 0) {
+      if (n3[i]->_val >= 0.f) {
         i++;
         continue;
       }
-      if (n3[j]->_val < 0) {
+      if (n3[j]->_val < 0.f) {
         --j;
         continue;
       }
@@ -740,10 +737,21 @@ class Contour2D : public ContourBase<2> {
     }
     Vec2<float> v = poly[1] - poly[0];
     Vec2<float> normal(-v[1], v[0]);  // 90 degree rotation
-    if (dot(normal, n2[0][0]->_p - n2[0][1]->_p) < 0.) std::swap(poly[0], poly[1]);
+    if (dot(normal, n2[0][0]->_p - n2[0][1]->_p) < 0.f) std::swap(poly[0], poly[1]);
     _contour(poly);
   }
 };
+
+// Template deduction guides:
+
+template <typename Eval, typename Border>
+Contour3DMesh(int gridn, GMesh* pmesh, Eval eval, Border border) -> Contour3DMesh<Eval, Border>;
+
+template <typename Eval, typename Border>
+Contour3D(int gridn, GMesh* pmesh, Eval eval, Border border) -> Contour3D<Eval, Border>;
+
+template <typename Eval, typename Contour, typename Border>
+Contour2D(int gridn, Eval eval, Contour contour, Border border) -> Contour2D<Eval, Contour, Border>;
 
 }  // namespace hh
 

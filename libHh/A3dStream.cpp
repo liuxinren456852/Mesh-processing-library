@@ -1,8 +1,6 @@
 // -*- C++ -*-  Copyright (c) Microsoft Corporation; see license.txt
 #include "libHh/A3dStream.h"
 
-#include <cstdio>  // sscanf()
-
 #include "libHh/BinaryIO.h"
 #include "libHh/NetworkOrder.h"
 #include "libHh/Polygon.h"
@@ -17,9 +15,9 @@ namespace {
 const A3dColor k_color_undefined{-1.f, 0.f, 0.f};
 
 struct a3d_binary_buf {
-  Vec<char, 2> magic;
+  Vec2<char> magic;
   ushort utype;
-  Vec<float, 3> f;
+  Vec3<float> f;
 };
 
 }  // namespace
@@ -61,7 +59,7 @@ const string& A3dElem::comment() const {
 }
 
 Vector A3dElem::pnormal() const {
-  Vector vt(0.f, 0.f, 0.f);
+  Vector vt{};
   assertx(_type == EType::polygon && num() >= 3);
   for_intL(i, 1, num() - 1) vt += cross(_v[0].p, _v[i].p, _v[i + 1].p);
   vt.normalize();
@@ -108,13 +106,13 @@ void RA3dStream::read(A3dElem& el) {
       el.f() = f;
       return;
     } else if (type == A3dElem::EType::point) {
-      el.push(A3dVertex(Point(f[0], f[1], f[2]), normal, _curcol));
+      el.push(A3dVertex(f, normal, _curcol));
       normal = Vector(0.f, 0.f, 0.f);
       return;
     } else if (type == A3dElem::EType::polygon || type == A3dElem::EType::polyline) {
       break;
     } else {
-      assertnever(string() + "RA3dStream: type '" + ctype + "' unknown");
+      assertnever(string("RA3dStream: type '") + ctype + "' unknown");
     }
   }
   assertx(is_zero(normal));
@@ -138,7 +136,7 @@ void RA3dStream::read(A3dElem& el) {
     } else if (A3dElem::status_type(type)) {
       set_current_color(ctype, f);
     } else {
-      assertnever(string() + "RA3dStream: type '" + ctype + "' unexpected within polygon");
+      assertnever(string("RA3dStream: type '") + ctype + "' unexpected within polygon");
     }
   }
   assertx(is_zero(normal));
@@ -161,7 +159,7 @@ void RA3dStream::set_current_color(char ctype, const Vec3<float>& f) {
 // *** RSA3dStream
 
 bool RSA3dStream::read_line(bool& binary, char& ctype, Vec3<float>& f, string& comment) {
-  // _is >> std::ws;  // commented 20121211
+  // _is >> std::ws;  // commented 2012-12-11
   char ch;
   if (_is.peek() == '\n') _is.get(ch);  // there may be a blank line between elements
   int vpeek = _is.peek();
@@ -190,9 +188,11 @@ bool RSA3dStream::read_line(bool& binary, char& ctype, Vec3<float>& f, string& c
   } else {
     assertx(_is.peek() == ' ');
     if (1) {
-      string sline;
-      assertx(my_getline(_is, sline));
-      assertx(sscanf(sline.c_str(), "%g %g %g", &f[0], &f[1], &f[2]) == 3);  // 20131220 added assertx()
+      string line;
+      assertx(my_getline(_is, line));
+      const char* s = line.c_str();
+      for_int(c, 3) f[c] = float_from_chars(s);
+      assert_no_more_chars(s);
     } else {
       assertx(_is >> f[0] >> f[1] >> f[2]);
       _is.ignore(std::numeric_limits<std::streamsize>::max(), '\n');  // likely needed
@@ -332,7 +332,10 @@ void WSA3dStream::output(bool binary, char ctype, const Vec3<float>& f) {
     // precision determined by that in WFile::WFile()
     _os << ctype << " " << f[0] << " " << f[1] << " " << f[2] << '\n';
   }
-  assertx(_os);
+  if (!_os) {
+    showf("Write failed, maybe due to broken pipe.\n");
+    exit_immediately(0);
+  }
 }
 
 void WSA3dStream::output_comment(const string& s) { assertx(_os << "#" << s << "\n"); }

@@ -19,9 +19,8 @@ namespace hh {
 // Does a vector contain an element?
 template <typename T> bool vec_contains(const std::vector<T>& vec, const T& e) {
   // return std::find(vec.begin(), vec.end(), e) != vec.end();
-  for (const T& ee : vec) {
+  for (const T& ee : vec)
     if (e == ee) return true;
-  }
   return false;
 }
 // Remove an element from a vector; return was_there.
@@ -54,6 +53,7 @@ template <typename T> class Stack {
   const T& top() const { return _s.back(); }
   bool empty() const { return _s.empty(); }
   int height() const { return narrow_cast<int>(_s.size()); }
+  size_t size() const { return _s.size(); }
   bool contains(const T& e) const { return vec_contains(_s, e); }
   bool remove(const T& e) { return vec_remove_ordered(_s, e); }
   using value_type = T;

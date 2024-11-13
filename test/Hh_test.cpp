@@ -20,6 +20,7 @@ const string tmpf = "v.Hh_test.txt";
 
 void try_it(const string& stest) {
   if (0) SHOW(stest);
+  // This test is broken.  We cannot assume that csh, sh, or cmd are in the user's path.
   for_int(method, 2) {  // csh, sh, cmd
     if (0) SHOW(method);
     string s1 = quote_arg_for_sh(stest);  // stronger than quote_arg_for_shell()
@@ -56,25 +57,25 @@ void try_it(const string& stest) {
     } else if (1 && method == 1) {
       string s2 = "echo " + s1 + " >" + tmpf;
       assertx(!my_sh(s2));
-    } else if (method == 2) {  // I give up on this.
+    } else if (method == 2) {  // Give up on this.
       string s1cmd = '"' + stest + '"';
       // string s1cmd = windows_spawn_quote(stest);
       // string s2 = "echo " + s1cmd + " >" + tmpf;  // DOS eol; extra space at eol; echo ignores quotes
       // string s2 = "/cygwin/bin/echo " + s1cmd + " >" + tmpf;  // cygwin quote parsing is poor
       string s2 = "/mingw/msys/1.0/bin/echo " + s1cmd + " >" + tmpf;  // still does not handle double-quotes
-      string sbu = getenv_string("FORCE_CMD");                        // "" if undefined
+      string s_bu = getenv_string("FORCE_CMD");                       // "" if undefined
       my_setenv("FORCE_CMD", "1");
       assertx(!my_sh(s2));
-      my_setenv("FORCE_CMD", sbu);
+      my_setenv("FORCE_CMD", s_bu);
     }
     RFile fi(tmpf);
-    string sline;
-    assertx(my_getline(fi(), sline));
-    // SHOW(sline);
-    // Here I once saw the error "method=1 stest=a b c sline=a\ b\ c"; it was due to a setting of env
+    string line;
+    assertx(my_getline(fi(), line));
+    // SHOW(line);
+    // Once saw the error "method=1 stest=a b c line=a\ b\ c"; it was due to a setting of env
     //  variable CYGWIN="noglob nodosfilewarning" likely set during an interrupted Emacs grep -- since fixed.
-    if (sline != stest) SHOW(method, stest, sline);
-    assertx(sline == stest);
+    if (line != stest) SHOW(method, stest, line);
+    assertx(line == stest);
   }
 }
 
@@ -98,7 +99,7 @@ void test_spawn() {
   }
   {
     const string arcands = R"(abcdefgh       `~!@#$%^&*()-_=+[{]}\|;:'"",<.>/?)";  // double '"' frequency
-    for_int(itry, 10) {                                                            // tried up to 10000
+    for_int(itry, 10) {                                                            // tried up to 10'000
       const int len = 20;
       string str(len, ' ');
       for_int(i, len) str[i] = arcands[Random::G.get_unsigned(narrow_cast<unsigned>(arcands.size()))];
@@ -268,72 +269,65 @@ int main() {
   if (1) {
     {
       Array<int> ar;
-      for (int e : range(2)) ar.push(e);
+      for (const int e : range(2)) ar.push(e);
       assertx(ar == V(0, 1).view());
     }
     {
-      Array<int> ar;
-      for (int e : range(1, 4)) ar.push(e);
+      Array<int> ar(range(2));
+      assertx(ar == V(0, 1).view());
+    }
+    {
+      Array<int> ar(range(1, 4));
       assertx(ar == V(1, 2, 3).view());
     }
     {
-      Array<int> ar;
-      for (int e : range(0)) ar.push(e);
+      Array<int> ar(range(0));
       assertx(ar.num() == 0);
     }
     {
-      Array<int> ar;
-      for (int e : range(-1)) ar.push(e);
+      Array<int> ar(range(-1));
       assertx(ar.num() == 0);
     }
     {
-      Array<int> ar;
-      for (int e : range(-2, 0)) ar.push(e);
+      Array<int> ar(range(-2, 0));
       assertx(ar == V(-2, -1).view());
     }
     {
-      Array<int> ar;
-      for (int e : range(-2, -2)) ar.push(e);
+      Array<int> ar(range(-2, -2));
       assertx(ar.num() == 0);
     }
     {
-      Array<int> ar;
-      for (int e : range(0, 0)) ar.push(e);
+      Array<int> ar(range(0, 0));
       assertx(ar.num() == 0);
     }
     {
-      Array<int> ar;
-      for (int e : range(2, 0)) ar.push(e);
+      Array<int> ar(range(2, 0));
       assertx(ar.num() == 0);
     }
     {
-      Array<uchar> ar;
-      for (uchar e : range(uchar{4}, uchar{6})) ar.push(e);
+      Array<uchar> ar(range(uchar{4}, uchar{6}));
       assertx(ar == V(uchar{4}, uchar{5}).view());
     }
     {
-      Array<uint8_t> ar;
-      for (uint8_t e : range(uint8_t{4}, uint8_t{6})) ar.push(e);
+      Array<uint8_t> ar(range(uint8_t{4}, uint8_t{6}));
       assertx(ar == V(uint8_t{4}, uint8_t{5}).view());
     }
     {
-      Array<short> ar;
-      for (short e : range<short>(-2, 2)) ar.push(e);
+      Array<short> ar(range<short>(-2, 2));
       assertx(ar == convert<short>(V(-2, -1, 0, 1)).view());
     }
     {
-      Array<uint64_t> ar;
-      for (uint64_t e : range(uint64_t{3})) ar.push(e);
+      Array<uint64_t> ar(range(uint64_t{3}));
       assertx(ar == V<uint64_t>(0u, 1u, 2u).view());
     }
   }
   if (0) {
-    test_spawn2();
+    test_spawn();
     return 0;
   }
-  if (1) {
-    test_spawn();
-    if (0) return 0;
+  if (0) {
+    test_spawn2();
+    return 0;
   }
   {
     assertx(!getenv("ZZ"));
@@ -439,7 +433,7 @@ line2)";
 #if 0
     ArrayView<int> arv(ar);
     auto arv2 = clone(arv);
-    dummy_use(arv2);  // correctly fails static_assert
+    dummy_use(arv2);  // Correctly fails static_assert.
 #endif
   }
   {
@@ -481,13 +475,13 @@ line2)";
   }
   {
     constexpr auto vsign = sign(-TAU);
-    SHOW(vsign, type_name<decltype(vsign)>());
+    SHOW(vsign, type_name(vsign));
     constexpr auto vsignz = signz(-TAU);
-    SHOW(vsignz, type_name<decltype(vsignz)>());
+    SHOW(vsignz, type_name(vsignz));
     constexpr auto vsignd = sign(-D_TAU);
-    SHOW(vsignd, type_name<decltype(vsignd)>());
+    SHOW(vsignd, type_name(vsignd));
     constexpr auto vsignzd = signz(-D_TAU);
-    SHOW(vsignzd, type_name<decltype(vsignzd)>());
+    SHOW(vsignzd, type_name(vsignzd));
     constexpr auto vsquare5 = square(5);
     SHOW(vsquare5);
     constexpr auto vclamped10 = clamp(-11, 10, 20);
@@ -609,10 +603,10 @@ line2)";
     }
   }
   if (1) {
-    RFile fi("echo ' abc' |");  // test to verify that we read the first space using getline
-    string sline;
-    assertx(my_getline(fi(), sline));
-    assertx(sline == " abc");
+    RFile fi("echo ' abc' |");  // Test to verify that we read the first space using my_getline().
+    string line;
+    assertx(my_getline(fi(), line));
+    assertx(line == " abc");
   }
   {
     // test std::forward in assertx()
@@ -637,5 +631,10 @@ line2)";
     SHOW(alignof(Array<char>));      // 8 on win, mingw
     SHOW(sizeof(Array<char>));       // 24 on win; 16 on mingw (pleasant surprise), 12 on clang (32-bit)
                                      // see ~/git/hh_src/test/native/bug_size.cpp
+  }
+  {
+    int i = 3, j = 4;
+    assertx(SSHOW(i) == "i = 3");
+    assertx(SSHOW(i, j) == "i=3 j=4");
   }
 }

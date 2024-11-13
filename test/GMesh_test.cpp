@@ -1,5 +1,7 @@
 // -*- C++ -*-  Copyright (c) Microsoft Corporation; see license.txt
 #include "libHh/GMesh.h"
+
+#include "libHh/FileIO.h"
 using namespace hh;
 
 namespace {
@@ -19,12 +21,13 @@ using upStruct1 = unique_ptr<Struct1>;
 HH_SACABLE(upStruct1);
 HH_SAC_ALLOCATE_CD_FUNC(Mesh::MFace, upStruct1, f_pstruct1);
 
-void showmesh(GMesh& mesh) {
+void show_mesh(GMesh& mesh) {
   mesh.ok();
   showf("Mesh {\n  Vertices (%d) {\n", mesh.num_vertices());
+  string str;
   for (Vertex v : mesh.ordered_vertices()) {
     const Point& p = mesh.point(v);
-    showf("    %d : (%g %g %g)\n", mesh.vertex_id(v), p[0], p[1], p[2]);
+    showf("    %d : %s\n", mesh.vertex_id(v), csform_vec(str, p));
   }
   showf("  } EndVertices\n  Edges (%d)\n  Faces (%d) {\n", mesh.num_edges(), mesh.num_faces());
   for (Face f : mesh.ordered_faces()) {
@@ -77,8 +80,8 @@ int main() {
   }
   {
     GMesh mesh;
-    mesh.read(std::cin);
-    showmesh(mesh);
+    mesh.read(RFile("-")());
+    show_mesh(mesh);
     SHOW("original");
     mesh.write(std::cout);
     SHOW("renumbered");

@@ -1,7 +1,7 @@
 // -*- C++ -*-  Copyright (c) Microsoft Corporation; see license.txt
 #include "libHh/Principal.h"
 
-#include "libHh/LLS.h"
+#include "libHh/Lls.h"
 #include "libHh/Random.h"
 #include "libHh/Timer.h"
 
@@ -47,7 +47,7 @@ bool em_principal_components(CMatrixView<float> mi, MatrixView<float> mo, ArrayV
   assertx(eimag.num() == ne);
   dummy_use(unused_orthonormalize_rows);
   //
-  auto up_timer = m * n > 10000 * 100 ? make_unique<Timer>("__pca_em") : nullptr;
+  auto up_timer = m * n > 10'000 * 100 ? make_unique<Timer>("__pca_em", Timer::EMode::abbrev) : nullptr;
   // C = rand(p, k);
   Matrix<float> mc(n, ne);
   Random random;
@@ -58,7 +58,7 @@ bool em_principal_components(CMatrixView<float> mi, MatrixView<float> mo, ArrayV
       // Expectation step
       //  x = inv(CT * C) * CT * data;   i.e. least-squares solution of C x = data;
       //  C[n][ne] = mc;  x[ne][m];  data[n][m] = transpose(mi);  x is projection of data into C.
-      QrdLLS lls(n, ne, m);
+      QrdLls lls(n, ne, m);
       lls.enter_a(mc);
       for_int(i, m) lls.enter_b_c(i, mi[i]);
       if (!lls.solve()) return false;
@@ -67,7 +67,7 @@ bool em_principal_components(CMatrixView<float> mi, MatrixView<float> mo, ArrayV
     {
       // Maximization step
       //  C = data*xT*inv(x*xT);   i.e. least-squares solution of xT CT = dataT
-      QrdLLS lls(m, ne, n);
+      QrdLls lls(m, ne, n);
       for_int(i, ne) lls.enter_a_c(i, x[i]);
       lls.enter_b(mi);
       if (!lls.solve()) return false;

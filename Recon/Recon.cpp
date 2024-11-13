@@ -4,8 +4,7 @@
 // 1993-03-16 ported from C version
 
 // Notes:
-//  The pcnor's should point outwards (I define distance function to be
-//   negative inside the object).
+//  The pcnor's should point outwards. (The distance function is defined to be negative inside the object.)
 //  The growing of pc's is not ideal.
 //  The goals are:
 //   - to only consider points on the current sheet
@@ -66,7 +65,7 @@ bool have_normals;  // data contains normal information
 
 string g_header;  // header to place at top of output files
 Frame xform;      // original pts -> pts in unit cube
-Frame xformi;     // inverse
+Frame xform_inverse;
 
 unique_ptr<PointSpatial<int>> SPp;   // spatial partition on co
 unique_ptr<PointSpatial<int>> SPpc;  // spatial partition on pcorg
@@ -108,7 +107,7 @@ void close_mk(unique_ptr<Mk3d>& pmk) {
 }
 
 void process_read() {
-  HH_TIMER(_read);
+  HH_TIMER("_read");
   RSA3dStream ia3d(std::cin);
   A3dElem el;
   int nnor = 0;
@@ -138,13 +137,13 @@ void process_read() {
 }
 
 void compute_xform() {
-  Bbox bbox;
-  for_int(i, num) bbox.union_with(co[i]);
+  assertx(co.num() == num);
+  const Bbox bbox{co};
   xform = bbox.get_frame_to_small_cube();
   if (!is_3D) xform.p()[0] = 0.f;  // preserve x == 0
   float xform_scale = xform[0][0];
-  showdf("Applying xform: %s", FrameIO::create_string(xform, 1, 0.f).c_str());
-  xformi = ~xform;
+  showdf("Applying xform: %s", FrameIO::create_string(ObjectFrame{xform, 1}).c_str());
+  xform_inverse = ~xform;
   for_int(i, num) co[i] *= xform;
   // nor[] is unchanged
   samplingd *= xform_scale;
@@ -183,10 +182,8 @@ void compute_tp(int i, int& n, Frame& f) {
   PArray<Point, 40> pa;
   SpatialSearch<int> ss(SPp.get(), co[i]);
   for (;;) {
-    assertx(!ss.done());
-    float dis2;
-    int pi = ss.next(&dis2);
-    if ((pa.num() >= minkintp && dis2 > square(samplingd)) || pa.num() >= maxkintp) break;
+    const auto [pi, d2] = ss.next();
+    if ((pa.num() >= minkintp && d2 > square(samplingd)) || pa.num() >= maxkintp) break;
     pa.push(co[pi]);
     if (pi != i && !gpcpseudo->contains(i, pi)) gpcpseudo->enter_undirected(i, pi);
   }
@@ -227,7 +224,7 @@ void print_principal(const Frame& f) {
     iob->specular(.5f, .5f, .5f);
     iob->phong(4.f);
     iob->push();
-    iob->apply(f * xformi);
+    iob->apply(f * xform_inverse);
     draw_pc_extent(*iob);
     iob->pop();
   }
@@ -238,7 +235,7 @@ void print_principal(const Frame& f) {
     iof->begin_force_polyline(true);
     {
       iof->push();
-      iof->apply(f * xformi);
+      iof->apply(f * xform_inverse);
       draw_pc_linear(*iof);
       iof->pop();
     }
@@ -249,14 +246,14 @@ void print_principal(const Frame& f) {
     iou->specular(.6f, .6f, .2f);
     iou->phong(3.f);
     iou->push();
-    iou->apply(f * xformi);
+    iou->apply(f * xform_inverse);
     draw_pc_linear(*iou);
     iou->pop();
   }
 }
 
 void process_principal() {
-  HH_TIMER(_principal);
+  HH_TIMER("_principal");
   // Statistics in reverse order of printout
   HH_STAT(Sr21);
   HH_STAT(Sr20);
@@ -272,7 +269,7 @@ void process_principal() {
     if (ioo) pctrans[i] = f;
     Snei.enter(n);
     float len0 = mag(f.v(0)), len1 = mag(f.v(1)), len2 = mag(f.v(2));
-    assertx(len2 > 0);  // principal_components() should do this
+    assertx(len2 > 0.f);  // principal_components() should do this
     Slen0.enter(len0);
     Slen1.enter(len1);
     Slen2.enter(len2);
@@ -292,8 +289,8 @@ void process_principal() {
     iod->specular(0.f, 0.f, 0.f);
     iod->phong(1.f);
     for_int(i, num) {
-      iod->point(co[i] * xformi);
-      iod->point(pcorg[i] * xformi);
+      iod->point(co[i] * xform_inverse);
+      iod->point(pcorg[i] * xform_inverse);
       iod->end_polyline();
     }
   }
@@ -371,22 +368,20 @@ void add_exterior_orientation(const Set<int>& nodes) {
 }
 
 void remove_exterior_orientation() {
-  Array<int> ari;
-  for (int j : gpcpseudo->edges(num)) ari.push(j);
-  for (int i : ari) gpcpseudo->remove_undirected(num, i);
+  for (int i : Array<int>(gpcpseudo->edges(num))) gpcpseudo->remove_undirected(num, i);
   gpcpseudo->remove(num);
 }
 
 void show_propagation(int i, int j, float dotp) {
-  assertx(i >= 0 && i <= num && j >= 0 && j < num && dotp >= 0);
+  assertx(i >= 0 && i <= num && j >= 0 && j < num && dotp >= 0.f);
   if (i == num || !iop) return;
   float f = min((1.f - dotp) * 10.f, 1.f);  // low dotp, high f are signific.
   iop->diffuse(.2f + .8f * f, .8f + .2f * f, .5f + .5f * f);
   iop->specular(0.f, 0.f, 0.f);
   iop->phong(3.f);
-  iop->point(pcorg[i] * xformi);
+  iop->point(pcorg[i] * xform_inverse);
   iop->normal(pcnor[i]);
-  iop->point(pcorg[j] * xformi);
+  iop->point(pcorg[j] * xform_inverse);
   iop->normal(pcnor[j]);
   iop->end_polyline();
 }
@@ -400,7 +395,7 @@ void propagate_along_path(int i) {
     if (j == num || pciso[j]) continue;  // immediate caller
     float corr = pc_dot(i, j);
     pScorr->enter(abs(corr));
-    if (corr < 0) pcnor[j] = -pcnor[j];
+    if (corr < 0.f) pcnor[j] = -pcnor[j];
     pciso[j] = true;
     show_propagation(i, j, abs(corr));
     propagate_along_path(j);
@@ -411,12 +406,12 @@ void orient_set(const Set<int>& nodes) {
   showdf("component with %d points\n", nodes.num());
   add_exterior_orientation(nodes);
   gpcpath = make_unique<Graph<int>>();
-  for (int i : nodes) gpcpath->enter(i);
-  gpcpath->enter(num);
   {
-    HH_TIMER(__graphmst);
+    HH_TIMER("__graphmst");
     // must be connected here!
-    assertx(graph_mst<int>(*gpcpseudo, pc_corr, *gpcpath));
+    auto [graph, is_connected] = graph_mst<int>(*gpcpseudo, pc_corr);
+    assertx(is_connected);
+    *gpcpath = std::move(graph);
   }
   int nextlink = gpcpath->out_degree(num);
   if (nextlink > 1) showdf(" num_exteriorlinks_used=%d\n", nextlink);
@@ -433,13 +428,13 @@ void draw_oriented_tps() {
   ioo->phong(3.f);
   for_int(i, num) {
     Frame& f = pctrans[i];
-    if (dot(f.v(minora), pcnor[i]) < 0) {
+    if (dot(f.v(minora), pcnor[i]) < 0.f) {
       // flip 2 of the axes to keep right hand rule
       f.v(minora) = -f.v(minora);
       f.v(0) = -f.v(0);
     }
     ioo->push();
-    ioo->apply(f * xformi);
+    ioo->apply(f * xform_inverse);
     draw_pc_linear(*ioo);
     if (!is_3D) {
       ioo->point(0.f, 0.f, 0.f);
@@ -454,9 +449,9 @@ void print_graph(Mk3d& mk, const Graph<int>& g, CArrayView<Point> pa, CArrayView
   for_int(i, num) {
     for (int j : g.edges(i)) {
       if (j >= i) continue;
-      mk.point(pa[i] * xformi);
+      mk.point(pa[i] * xform_inverse);
       if (pn) mk.normal((*pn)[i]);
-      mk.point(pa[j] * xformi);
+      mk.point(pa[j] * xform_inverse);
       if (pn) mk.normal((*pn)[j]);
       mk.end_polyline();
     }
@@ -464,7 +459,7 @@ void print_graph(Mk3d& mk, const Graph<int>& g, CArrayView<Point> pa, CArrayView
 }
 
 void orient_tp() {
-  HH_TIMER(_orient);
+  HH_TIMER("_orient");
   if (usenormals == 3 && have_normals) return;
   if (usenormals == 2 && have_normals) {
     for_int(i, num) {
@@ -478,7 +473,7 @@ void orient_tp() {
     stat.set_print(true);
   }
   {
-    HH_TIMER(__graphnumcompon);
+    HH_TIMER("__graphnumcompon");
     int nc = graph_num_components(*gpcpseudo);
     showdf("Number of components: %d\n", nc);
     if (nc > 1) showdf("*** #comp > 1, may want larger -samp\n");
@@ -502,9 +497,8 @@ void orient_tp() {
     while (!queue.empty()) {
       int i = queue.dequeue();
       assertx(setnotvis.remove(i));
-      for (int j : gpcpseudo->edges(i)) {
+      for (int j : gpcpseudo->edges(i))
         if (nodes.add(j)) queue.enqueue(j);
-      }
     }
     pScorr = make_unique<Stat>("Scorr", true);
     orient_set(nodes);
@@ -529,8 +523,7 @@ float compute_unsigned(const Point& p, Point& proj) {
   Homogeneous h;
   const int k = 1;  // make a parameter?
   for_int(i, k) {
-    assertx(!ss.done());
-    int pi = ss.next();
+    const int pi = ss.next().id;
     h += co[pi];
   }
   proj = to_Point(h / float(k));
@@ -544,29 +537,27 @@ float compute_signed(const Point& p, Point& proj) {
   int tpi;
   {
     SpatialSearch<int> ss(SPpc.get(), p);
-    tpi = ss.next();
+    tpi = ss.next().id;
   }
   Vector vptopc = p - pcorg[tpi];
   float dis = dot(vptopc, pcnor[tpi]);
   proj = p - dis * pcnor[tpi];
   if (!is_3D) assertx(!proj[0]);
-  if ((is_3D && (proj[0] <= 0 || proj[0] >= 1)) || proj[1] <= 0 || proj[1] >= 1 || proj[2] <= 0 || proj[2] >= 1)
+  if ((is_3D && (proj[0] <= 0.f || proj[0] >= 1.f)) || proj[1] <= 0.f || proj[1] >= 1.f || proj[2] <= 0.f ||
+      proj[2] >= 1.f)
     return k_Contour_undefined;
   if (1) {
     // check that projected point is close to a data point
     SpatialSearch<int> ss(SPp.get(), proj);
-    float dis2;
-    ss.next(&dis2);
-    if (dis2 > square(samplingd)) return k_Contour_undefined;
+    if (ss.next().d2 > square(samplingd)) return k_Contour_undefined;
   }
   if (prop) {
     // check that grid point is close to a data point
     SpatialSearch<int> ss(SPp.get(), p);
-    float dis2;
-    ss.next(&dis2);
+    const float d2 = ss.next().d2;
     float grid_diagonal2 = square(1.f / gridsize) * 3.f;
     const float fudge = 1.2f;
-    if (dis2 > grid_diagonal2 * square(fudge)) return k_Contour_undefined;
+    if (d2 > grid_diagonal2 * square(fudge)) return k_Contour_undefined;
   }
   return dis;
 }
@@ -577,9 +568,9 @@ void print_directed_seg(Mk3d& mk, const Point& p1, const Point& p2, const A3dCol
   mk.diffuse(col);
   mk.specular(0.f, 0.f, 0.f);
   mk.phong(3.f);
-  mk.point(p1 * xformi);
+  mk.point(p1 * xform_inverse);
   mk.normal(v);
-  mk.point(p2 * xformi);
+  mk.point(p2 * xform_inverse);
   mk.normal(v);
   mk.end_polyline();
 }
@@ -595,7 +586,7 @@ template <int D> struct eval_point {
     float dis = unsigneddis ? compute_unsigned(p, proj) : compute_signed(p, proj);
     if (dis == k_Contour_undefined) return dis;
     if (iol) {
-      if (dis < 0)
+      if (dis < 0.f)
         print_directed_seg(*iol, p, proj, A3dColor(1.f, 1.f, .3f));
       else
         print_directed_seg(*iol, proj, p, A3dColor(1.f, 1.f, 1.f));
@@ -605,11 +596,11 @@ template <int D> struct eval_point {
 };
 
 struct output_border3D {
-  void operator()(const Array<Vec3<float>>& poly) const {
+  void operator()(CArrayView<Vec3<float>> poly) const {
     assertx(ioc);
     A3dElem el(A3dElem::EType::polygon);
     for_int(i, poly.num()) {
-      el.push(A3dVertex(Point(poly[i]) * xformi, Vector(0.f, 0.f, 0.f),
+      el.push(A3dVertex(Point(poly[i]) * xform_inverse, Vector(0.f, 0.f, 0.f),
                         A3dVertexColor(A3dColor(1.f, .16f, 0.f), A3dColor(1.f, .5f, .3f), A3dColor(3.f, 0.f, 0.f))));
     }
     ioc->oa3d().write(el);
@@ -617,12 +608,12 @@ struct output_border3D {
 };
 
 struct output_border2D {
-  void operator()(const Array<Vec2<float>>& poly) const {
+  void operator()(CArrayView<Vec2<float>> poly) const {
     assertx(ioc);
     ASSERTX(poly.num() == 2);
     A3dElem el(A3dElem::EType::polyline);
     for_int(i, poly.num()) {
-      el.push(A3dVertex(Point(0.f, poly[i][0], poly[i][1]) * xformi, Vector(0.f, 0.f, 0.f),
+      el.push(A3dVertex(Point(0.f, poly[i][0], poly[i][1]) * xform_inverse, Vector(0.f, 0.f, 0.f),
                         A3dVertexColor(A3dColor(1.f, .16f, 0.f), A3dColor(1.f, .5f, .3f), A3dColor(3.f, 0.f, 0.f))));
     }
     ioc->oa3d().write(el);
@@ -630,12 +621,12 @@ struct output_border2D {
 };
 
 struct output_contour2D {
-  void operator()(const Array<Vec2<float>>& poly) const {
+  void operator()(CArrayView<Vec2<float>> poly) const {
     if (!iom) return;
     ASSERTX(poly.num() == 2);
     A3dElem el(A3dElem::EType::polyline);
     for_int(i, poly.num()) {
-      el.push(A3dVertex(Point(0.f, poly[i][0], poly[i][1]) * xformi, Vector(0.f, 0.f, 0.f),
+      el.push(A3dVertex(Point(0.f, poly[i][0], poly[i][1]) * xform_inverse, Vector(0.f, 0.f, 0.f),
                         A3dVertexColor(A3dColor(.7f, .3f, .1f))));
     }
     iom->oa3d().write(el);
@@ -679,7 +670,7 @@ template <typename Contour> void contour_2D(Contour& contour) {  // with or with
 }
 
 void process_contour() {
-  HH_TIMER(_contour);
+  HH_TIMER("_contour");
   if (is_3D) {
     // Note: now mesh is always created even if !iom.
     if (ioc) {
@@ -704,7 +695,7 @@ void process_contour() {
 }
 
 void process() {
-  HH_TIMER(Recon);
+  HH_TIMER("Recon");
   process_read();
   compute_xform();
   if (!gridsize) gridsize = int(1.f / samplingd + .5f);
@@ -719,8 +710,8 @@ void process() {
     fill(pciso, false);
   }
   {
-    HH_TIMER(_SPp);
-    int n = is_3D ? (num > 100000 ? 60 : num > 5000 ? 36 : 20) : (num > 1000 ? 36 : 20);
+    HH_TIMER("_SPp");
+    int n = is_3D ? (num > 100'000 ? 60 : num > 5000 ? 36 : 20) : (num > 1000 ? 36 : 20);
     SPp = make_unique<PointSpatial<int>>(n);
     for_int(i, num) SPp->enter(i, &co[i]);
   }
@@ -729,8 +720,8 @@ void process() {
     for_int(i, num) gpcpseudo->enter(i);
     process_principal();
     {
-      HH_TIMER(_SPpc);
-      int n = is_3D ? (num > 100000 ? 60 : num > 5000 ? 36 : 20) : (num > 1000 ? 36 : 20);
+      HH_TIMER("_SPpc");
+      int n = is_3D ? (num > 100'000 ? 60 : num > 5000 ? 36 : 20) : (num > 1000 ? 36 : 20);
       SPpc = make_unique<PointSpatial<int>>(n);
       for_int(i, num) SPpc->enter(i, &pcorg[i]);
     }
@@ -747,8 +738,9 @@ void process() {
 
 int main(int argc, const char** argv) {
   ParseArgs args(argc, argv);
+  HH_ARGSC("An 'a3d stream' of points is read from stdin.  Subsequent options are:");
   HH_ARGSP(rootname, "string : name for output files (optional)");
-  HH_ARGSP(what, "string : output codes 'dbufgpohlcm' (default mesh 'm')");
+  HH_ARGSP(what, "string : output ch codes 'dbufgpohlcm' (default mesh 'm')");
   HH_ARGSP(samplingd, "f : sampling density + noise (delta + rho)");
   HH_ARGSP(gridsize, "n : contouring # grid cells (opt.)");
   HH_ARGSP(maxkintp, "k : max # points in tp");
@@ -764,10 +756,11 @@ int main(int argc, const char** argv) {
   hh_clean_up();
   // We close iom here so that the mesh comes after everything else in the file.
   if (iom && is_3D) {
-    for (Vertex v : mesh.vertices()) mesh.set_point(v, mesh.point(v) * xformi);
+    for (Vertex v : mesh.vertices()) mesh.set_point(v, mesh.point(v) * xform_inverse);
     // mesh.write(assertx(dynamic_cast<WSA3dStream*>(&iom->oa3d()))->os());  // note: would require RTTI
     mesh.write(down_cast<WSA3dStream*>(&iom->oa3d())->os());
   }
   close_mk(iom);
+  if (!k_debug) exit_immediately(0);
   return 0;
 }

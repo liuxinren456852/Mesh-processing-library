@@ -73,6 +73,11 @@ int main() {
     for (const auto& u : range(a1)) SHOW(u);
     SHOW(a2);
     for (const auto& u : range(a2)) SHOW(u);
+    Vec3<int> a3{};
+    assertx(is_zero(a3));
+    Vec3<int> a4(1, 2, 3);
+    a4 = Vec3<int>{};
+    assertx(is_zero(a4));
   }
   struct S : Vec2<int> {
     // void f() const { SHOW(*this); }
@@ -142,9 +147,9 @@ SHOW(t5);
 }
 {
   Vec<char, 2> magic{'B', 'M'};
-  static_assert(sizeof(magic) == 2, "");
+  static_assert(sizeof(magic) == 2);
   Vec<uchar, 4> buf2{uchar{0}, uchar{0}, uchar{0}, uchar{0}};
-  static_assert(sizeof(buf2) == 4, "");
+  static_assert(sizeof(buf2) == 4);
 }
 {
   Vec2<float> p(1.f, 2.f), q(8.f, 7.f), r;
@@ -178,8 +183,8 @@ SHOW(t5);
   SHOW(a2[2]);
 }
 {
-  // can a class derived from Vec be automatically converted to a CArrayView argument? yes.
-  auto func = [](CArrayView<int> a) {
+  // Can a class derived from Vec be automatically converted to a CArrayView argument? yes.
+  const auto func = [](CArrayView<int> a) {
     assertx(a.num() == 2);
     SHOW(a[1]);
   };
@@ -191,45 +196,37 @@ SHOW(t5);
 {
   Vec3<int> a1(3, 4, 5);
   SHOW(a1);
-#if 0  // fails because a1 contains int and 3.f is a float
+#if 0  // Fails because a1 contains int and 3.f is a float.
   SHOW(a1 / 3.f);
   Vec3<float> a2 = a1 / 3.f;
   SHOW(a2);
 #endif
 }
 {
-  Vec2<Vec2<int>> pp{V(3, 4), Vec2<int>{5, 6}};  // test both ways
+  Vec2<Vec2<int>> pp{V(3, 4), Vec2<int>{5, 6}};  // Test both ways.
   SHOW(pp);
   SHOW((pp + V(10, 10)));
   SHOW((Vec2<int>(10, 10) - pp));
   SHOW(-pp);
 }
-#if 0
 {
-  static_assert(std::is_standard_layout<Vec3<int>>::value == true, "");
-  static_assert(std::is_trivially_default_constructible<Vec3<int>>::value == true, "");
-  static_assert(std::is_trivially_copyable<Vec3<int>>::value == true, "");
-  static_assert(std::is_trivially_copyable<S>::value == true, "");
-  static_assert(std::is_trivially_copyable<S3>::value == true, "");
-  static_assert(std::is_trivially_copyable<S4>::value == true, "");
-  static_assert(std::is_trivial<Vec3<int>>::value == true, "");
-  static_assert(std::is_trivial<S>::value == true, "");
-  static_assert(std::is_trivial<S3>::value == true, "");
-  static_assert(std::is_standard_layout<Vec3<int>>::value == true, "");
-  static_assert(std::is_standard_layout<S>::value == true, "");
-  static_assert(std::is_standard_layout<S3>::value == true, "");
-#if 0
-  // GCC and clang complain that both S3 and Vec3<int> have a user-declared constructor,
-  // even though http://en.cppreference.com/w/cpp/types/is_pod
-  // states that is_pod corresponds to is_trivial and is_standard_layout.
-  // Visual Studio 2015 now also fails on these assertions.
-  static_assert(std::is_pod<S3>::value == false, "");         // fails
-  static_assert(std::is_pod<Vec3<int>>::value == false, "");  // fails
-#endif
-  static_assert(std::is_pod<S2>::value == true, "");
-  static_assert(std::is_pod<S4>::value == true, "");
+  static_assert(std::is_standard_layout_v<Vec3<int>> == true);
+  static_assert(std::is_trivially_default_constructible_v<Vec3<int>> == true);
+  static_assert(std::is_trivially_copyable_v<Vec3<int>> == true);
+  static_assert(std::is_trivially_copyable_v<S> == true);
+  static_assert(std::is_trivially_copyable_v<S3> == true);
+  static_assert(std::is_trivially_copyable_v<S4> == true);
+  static_assert(std::is_trivial_v<Vec3<int>> == true);
+  static_assert(std::is_trivial_v<S> == true);
+  static_assert(std::is_trivial_v<S3> == true);
+  static_assert(std::is_standard_layout_v<Vec3<int>> == true);
+  static_assert(std::is_standard_layout_v<S> == true);
+  static_assert(std::is_standard_layout_v<S3> == true);
+  static_assert(std::is_standard_layout_v<S2> == true);
+  static_assert(std::is_trivial_v<S2> == true);
+  static_assert(std::is_standard_layout_v<S4> == true);
+  static_assert(std::is_trivial_v<S4> == true);
 }
-#endif
 {
   Set<size_t> set;
   for_int(i, 100) for_int(j, 100) {
@@ -243,11 +240,11 @@ SHOW(t5);
   constexpr int v5 = ar1[1];
   SHOW(v5);
   constexpr auto triple6a = Vec3<float>::all(6);
-  SHOW(triple6a, type_name<decltype(triple6a)>());
+  SHOW(triple6a, type_name(triple6a));
   constexpr auto triple6b = ntimes<3>(6);
-  SHOW(triple6b, type_name<decltype(triple6b)>());
+  SHOW(triple6b, type_name(triple6b));
   constexpr auto triple6c = ntimes<3>(6.f);
-  SHOW(triple6c, type_name<decltype(triple6c)>());
+  SHOW(triple6c, type_name(triple6c));
   constexpr auto triple7 = thrice(7);
   SHOW(triple7);
   constexpr auto ntimes7 = ntimes<3>(7);
@@ -267,19 +264,13 @@ SHOW(t5);
   SHOW(ar.tail<3>());
 }
 {
-  auto ar0 = Vec<int, 5>::create([](int i) { return i * 5 + 3; });
+  const auto ar0 = Vec<int, 5>::create([](int i) { return i * 5 + 3; });
   SHOW(ar0);
   auto ar1 = V(1, 2, 3, 4, 5);
-  auto ar2 = map(ar1, [](int e) { return e * 10; });
+  const auto ar2 = map(ar1, [](int e) { return e * 10; });
   SHOW(ar2);
 }
-if (0) {
-  // VS2013: does not use move constructor on Vec1<P>.
-  // This could be due to the fact that Vec1 contains std::array<P, 1> which is non-trivial.
-  // (If it contained P[1], it would still be non-trivial since P has explicit copy-constructuor.)
-  // Thus, I may need to introduce explicit "= default" on move constructor and assignment in Vec,
-  //  something that is not supported in VS2013.
-  // Somehow gcc still defines implicit move constructor for Vec1<P>.
+{
   struct P {
     P() { SHOW("P::P()"); }
     ~P() { SHOW("P::~P()"); }
@@ -291,12 +282,10 @@ if (0) {
     }
     // P& operator=(P&&) { SHOW("P::operator=(P&&)"); return *this; }
   };
-#if 0
-  static_assert(std::is_trivial<P>::value == false, "");
-  static_assert(std::is_trivial<Vec1<P>>::value == false, "");
-  static_assert(std::is_trivially_copyable<P>::value == false, "");
-  static_assert(std::is_trivially_copyable<Vec1<P>>::value == false, "");
-#endif
+  static_assert(std::is_trivial_v<P> == false);
+  static_assert(std::is_trivial_v<Vec1<P>> == false);
+  static_assert(std::is_trivially_copyable_v<P> == false);
+  static_assert(std::is_trivially_copyable_v<Vec1<P>> == false);
   Vec1<P> s1;
   Vec1<P> s2 = s1;
   Vec1<P> s3 = std::move(s1);
@@ -309,7 +298,7 @@ if (0) {
   SU2 s2 = std::move(s1);
   assertx(*s2[0] == 1);
   assertx(*s2[1] == 2);
-  assertx(!s1[0]);  // NOLINT(bugprone-use-after-move, hicpp-invalid-access-moved)
+  assertx(!s1[0]);  // NOLINT(bugprone-use-after-move, hicpp-invalid-access-moved, clang-analyzer-cplusplus.Move)
   assertx(!s1[1]);
 }
 {
@@ -327,12 +316,10 @@ template class Vec<float, 2>;
 template class Vec<ushort, 3>;
 
 using U = Vec<unsigned, 2>;
-constexpr int n = 3;
-template <> bool Vec<U, n>::in_range(const Vec<U, n>&) const {  // because default definition is illegal
-  return false;
-}
-template <> bool Vec<U, n>::in_range(const Vec<U, n>&, const Vec<U, n>&) const { return false; }
-template class Vec<U, n>;
+// Override illegal definitions for U:
+template <> bool Vec<U, 2>::in_range(const Vec<U, 2>&) const { return false; }
+template <> bool Vec<U, 2>::in_range(const Vec<U, 2>&, const Vec<U, 2>&) const { return false; }
+template class Vec<U, 2>;
 
 template class Vec<void*, 3>;
 

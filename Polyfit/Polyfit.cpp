@@ -6,7 +6,7 @@
 #include "libHh/Facedistance.h"
 #include "libHh/FileIO.h"
 #include "libHh/FrameIO.h"
-#include "libHh/LLS.h"
+#include "libHh/Lls.h"
 #include "libHh/Map.h"
 #include "libHh/Polygon.h"
 #include "libHh/Principal.h"
@@ -42,16 +42,16 @@ bool nooutput = false;
 int verb = 1;
 
 WSA3dStream g_oa3d{std::cout};
-Frame xform;   // original verts + pts -> verts + pts in unit cube
-Frame xformi;  // inverse
+Frame xform;  // original verts + pts -> verts + pts in unit cube
+Frame xform_inverse;
 enum EOperation { OP_ecol, OP_espl, OP_NUM };
-const Vec<string, OP_NUM> opname = {"ecol", "espl"};
+const Vec<string, OP_NUM> op_name = {"ecol", "espl"};
 enum EResult { R_success, R_energy, R_illegal, R_NUM };
-const Vec<string, R_NUM> orname = {"success", "positive_energy", "illegal"};
-struct S_opstat {
+const Vec<string, R_NUM> op_result_name = {"success", "positive_energy", "illegal"};
+struct S_op_stat {
   Vec<int, OP_NUM> na, ns;
   Vec<int, R_NUM> nor;
-} opstat;
+} op_stat;
 
 const Array<float> spring_sched = {1e-2f, 1e-3f, 1e-4f, 1e-8f};
 constexpr int k_max_gfit_iter = 30;
@@ -66,9 +66,8 @@ float get_edis() {
 
 float get_espr() {
   double espr = 0.;
-  for (vertex v : verts) {
+  for (vertex v : verts)
     if (v->v[1]) espr += spring * dist2(v->p, v->v[1]->p);
-  }
   return float(espr);
 }
 
@@ -91,18 +90,17 @@ void poly_transform(const Frame& f) {
 }
 
 void compute_xform() {
-  Bbox bbox;
-  for_int(i, pt.n) bbox.union_with(pt.co[i]);
-  for (vertex v : verts) bbox.union_with(v->p);
+  assertx(pt.n == pt.co.num());
+  const Bbox bbox{concatenate(pt.co, transform(verts, [](vertex v) { return v->p; }))};
   xform = bbox.get_frame_to_small_cube();
-  if (verb >= 1) showdf("Applying xform: %s", FrameIO::create_string(xform, 1, 0.f).c_str());
-  xformi = ~xform;
+  if (verb >= 1) showdf("Applying xform: %s", FrameIO::create_string(ObjectFrame{xform, 1}).c_str());
+  xform_inverse = ~xform;
   for_int(i, pt.n) pt.co[i] *= xform;
   poly_transform(xform);
 }
 
 void initial_projection() {
-  HH_TIMER(_initialproj);
+  HH_TIMER("_initialproj");
   // do it inefficiently for now ?
   for_int(i, pt.n) {
     if (!pt.cle[i]) {
@@ -110,7 +108,7 @@ void initial_projection() {
       vertex mine = nullptr;
       for (vertex v : verts) {
         if (!v->v[1]) continue;
-        float d2 = project_point_seg2(pt.co[i], v->p, v->v[1]->p);
+        const float d2 = project_point_segment(pt.co[i], v->p, v->v[1]->p).d2;
         if (d2 < mind2) {
           mind2 = d2;
           mine = v;
@@ -119,7 +117,7 @@ void initial_projection() {
       pt.cle[i] = assertx(mine);
     }
     vertex v = pt.cle[i];
-    pt.dis2[i] = project_point_seg2(pt.co[i], v->p, v->v[1]->p);
+    pt.dis2[i] = project_point_segment(pt.co[i], v->p, v->v[1]->p).d2;
     v->pts.enter(i);
   }
   analyze_poly(0, "INITIAL");
@@ -128,14 +126,14 @@ void initial_projection() {
 void perhaps_initialize() {
   if (xform[0][0]) return;  // already initialized
   assertx(pt.n && verts.num());
-  assertw(spring > 0);  // just warn user
+  assertw(spring > 0.f);  // just warn user
   compute_xform();
   initial_projection();
 }
 
 void output_poly(WSA3dStream& oa3d, bool clearobject = false) {
   perhaps_initialize();
-  poly_transform(xformi);
+  poly_transform(xform_inverse);
   if (clearobject) oa3d.write_clear_object();
   A3dElem el;
   Set<vertex> setv;
@@ -193,13 +191,14 @@ void reproject_locally(int pi) {
   vertex v = assertx(pt.cle[pi]);
   assertx(v->pts.contains(pi));  // optional
   assertx(v->v[1]);              // optional
-  float a, mind2 = project_point_seg2(pt.co[pi], v->p, v->v[1]->p);
+  float a, mind2 = project_point_segment(pt.co[pi], v->p, v->v[1]->p).d2;
+  dummy_init(a);
   vertex mine = v;
-  if (v->v[0] && (a = project_point_seg2(pt.co[pi], v->v[0]->p, v->p)) < mind2) {
+  if (v->v[0] && (a = project_point_segment(pt.co[pi], v->v[0]->p, v->p).d2) < mind2) {
     mind2 = a;
     mine = v->v[0];
   }
-  if (v->v[1]->v[1] && (a = project_point_seg2(pt.co[pi], v->v[1]->p, v->v[1]->v[1]->p)) < mind2) {
+  if (v->v[1]->v[1] && (a = project_point_segment(pt.co[pi], v->v[1]->p, v->v[1]->v[1]->p).d2) < mind2) {
     mind2 = a;
     mine = v->v[1];
   }
@@ -224,18 +223,16 @@ void global_fit() {
   }
   int m = pt.n, n = verts.num();
   if (spring) {
-    for (vertex v : verts) {
+    for (vertex v : verts)
       if (v->v[1]) m++;
-    }
   }
-  if (verb >= 2) showf("GlobalFit: about to solve a %dx%d LLS system\n", m, n);
-  SparseLLS lls(m, n, 3);
+  if (verb >= 2) showf("GlobalFit: about to solve a %dx%d Lls system\n", m, n);
+  SparseLls lls(m, n, 3);
   // Add point constraints
   for_int(i, pt.n) {
     vertex cle = assertx(pt.cle[i]);
     Vec2<vertex> v{cle, assertx(cle->v[1])};
-    float bary;
-    project_point_seg2(pt.co[i], v[0]->p, v[1]->p, &bary);
+    const float bary = project_point_segment(pt.co[i], v[0]->p, v[1]->p).bary;
     for_int(j, 2) lls.enter_a_rc(i, mvi.get(v[j]), (!j ? bary : 1.f - bary));
     lls.enter_b_r(i, pt.co[i]);
   }
@@ -278,16 +275,15 @@ void local_fit(CArrayView<int> arpts, Vec2<vertex>& v, int niter, Point& newp, d
     // Enter projections
     for (int pi : arpts) {
       const Point& p = pt.co[pi];
-      float bary0, bary1;
-      dummy_init(bary0, bary1);
-      float d0 = v[0] ? project_point_seg2(p, v[0]->p, newp, &bary0) : BIGFLOAT;
-      float d1 = v[1] ? project_point_seg2(p, v[1]->p, newp, &bary1) : BIGFLOAT;
-      int mini = d0 < d1 ? 0 : 1;
+      const Vec2<SegmentProjectionResult> results{
+          v[0] ? project_point_segment(p, v[0]->p, newp) : SegmentProjectionResult{BIGFLOAT, 0.f, Point{}},
+          v[1] ? project_point_segment(p, v[1]->p, newp) : SegmentProjectionResult{BIGFLOAT, 0.f, Point{}}};
+      const int mini = results[0].d2 < results[1].d2 ? 0 : 1;
       assertx(v[mini]);
-      float bary = mini ? bary1 : bary0;
-      double u = 1.f - bary;
+      const float bary = results[mini].bary;
+      const double u = 1.f - bary;
       for_int(c, 3) {
-        double b = p[c] - bary * v[mini]->p[c];
+        const double b = p[c] - bary * v[mini]->p[c];
         UtU[c] += u * u;
         Utb[c] += u * b;
         btb[c] += b * b;
@@ -311,7 +307,7 @@ void local_fit(CArrayView<int> arpts, Vec2<vertex>& v, int niter, Point& newp, d
       newp[c] = float(newv);
       double a = btb[c] - UtU[c] * square(newv);
       assertw(a > -1e-8);
-      if (a > 0) rss1 += a;
+      if (a > 0.) rss1 += a;
     }
     assertw(rss1 - rss0 < 1e-13);
     if (!ni) prss0 = rss0;
@@ -387,7 +383,7 @@ EResult try_ecol(vertex v, int ni, int nri, float& edrss) {
   double drss = rss1 - rssf - double(crep);
   edrss = float(drss);
   if (verb >= 4) SHOW("ecol:", rssf, rss1, drss);
-  if (drss >= 0) return R_energy;  // energy function does not decrease
+  if (drss >= 0.) return R_energy;  // energy function does not decrease
   // ALL SYSTEMS GO
   // move points off to other segment and reproject later
   for (int pi : v->pts) {
@@ -420,7 +416,7 @@ EResult try_espl(vertex v, int ni, int nri, float& edrss) {
   double drss = rss1 - rssf + double(crep);
   edrss = float(drss);
   if (verb >= 4) SHOW("espl:", rssf, rss1, drss);
-  if (drss >= 0) return R_energy;  // energy function does not decrease
+  if (drss >= 0.) return R_energy;  // energy function does not decrease
   // ALL SYSTEMS GO
   vertex vn = new mvertex;
   verts.enter(vn);
@@ -439,14 +435,14 @@ EResult try_espl(vertex v, int ni, int nri, float& edrss) {
 }
 
 EResult try_op(vertex v, EOperation op, float& edrss) {
-  HH_ATIMER(__try_op);
+  HH_ATIMER("__try_op");
   EResult result;
   result = (op == OP_ecol   ? try_ecol(v, int(4.f * fliter + .5f), int(2.f * fliter + .5f), edrss)
             : op == OP_espl ? try_espl(v, int(3.f * fliter + .5f), int(4.f * fliter + .5f), edrss)
                             : (assertnever(""), R_success));
-  opstat.na[op]++;
-  if (result == R_success) opstat.ns[op]++;
-  opstat.nor[result]++;
+  op_stat.na[op]++;
+  if (result == R_success) op_stat.ns[op]++;
+  op_stat.nor[result]++;
   return result;
 }
 
@@ -475,7 +471,7 @@ void create_poly(bool pclosed, int n) {
 }
 
 void do_pfilename(Args& args) {
-  HH_TIMER(_pfilename);
+  HH_TIMER("_pfilename");
   RFile is(args.get_filename());
   RSA3dStream ia3d(is());
   A3dElem el;
@@ -500,9 +496,8 @@ void do_sample(Args& args) {
   int n = args.get_int();
   // Note: could add sample points from the polygon based on edge length.
   Array<vertex> arv;
-  for (vertex v : verts) {
+  for (vertex v : verts)
     if (v->v[1]) arv.push(v);
-  }
   for_int(i, n) {
     vertex v = arv[Random::G.get_unsigned(arv.num())];
     enter_point(interp(v->p, v->v[1]->p, Random::G.unif()), v);
@@ -513,7 +508,7 @@ void do_sample(Args& args) {
 }
 
 void do_filename(Args& args) {
-  HH_TIMER(_filename);
+  HH_TIMER("_filename");
   assertx(!pt.n);
   RFile is(args.get_filename());
   RSA3dStream ia3d(is());
@@ -537,7 +532,7 @@ void do_closedcurve(Args& args) { create_poly(true, args.get_int()); }
 
 void do_gfit(Args& args) {
   perhaps_initialize();
-  HH_TIMER(_gfit);
+  HH_TIMER("_gfit");
   int niter = args.get_int();
   if (verb >= 2) showdf("\n");
   if (verb >= 1) showdf("Beginning gfit, %d iterations, spr=%g\n", niter, spring);
@@ -549,16 +544,16 @@ void do_gfit(Args& args) {
     if (verb >= 3) showdf("iter %d/%d\n", i, niter);
     std::cout.flush();
     {
-      HH_ATIMER(__lls);
+      HH_ATIMER("__lls");
       global_fit();
     }
     {
-      HH_ATIMER(__project);
+      HH_ATIMER("__project");
       global_project();
     }
     float necsc = get_edis() + get_espr();
     float echange = necsc - ecsc;
-    assertw(echange < 0);
+    assertw(echange < 0.f);
     if (verb >= 4) {
       analyze_poly(2, "gfit_iter");
       showdf(" change in energy=%g\n", echange);
@@ -573,17 +568,16 @@ void do_gfit(Args& args) {
 
 void do_stoc() {
   perhaps_initialize();
-  HH_STIMER(_stoc);
+  HH_STIMER("_stoc");
   if (verb >= 2) showdf("\n");
   if (verb >= 1) showdf("Beginning stoc, spring=%g, fliter=%g\n", spring, fliter);
-  fill(opstat.na, 0);
-  fill(opstat.ns, 0);
-  fill(opstat.nor, 0);
+  fill(op_stat.na, 0);
+  fill(op_stat.ns, 0);
+  fill(op_stat.nor, 0);
   {
-    int i = 0, nbad = 0, lasti = -std::numeric_limits<int>::max();
-    for (vertex v : verts) {
+    int i = 0, nbad = 0, lasti = std::numeric_limits<int>::min();
+    for (vertex v : verts)
       if (v->v[1]) ecand.enter(v);
-    }
     while (!ecand.empty()) {
       i++;
       vertex v = ecand.remove_random(Random::G);
@@ -606,8 +600,8 @@ void do_stoc() {
         continue;
       }
       if (verb >= 3 || (verb >= 2 && i >= lasti + 100)) {
-        showdf("it %5d, %s (after %3d) [%5d/%-5d] edrss=%e\n", i, opname[op].c_str(), nbad, ecand.num(), verts.num(),
-               edrss);
+        showdf("it %5d, %s (after %3d) [%5d/%-5d] edrss=%e\n",  //
+               i, op_name[op].c_str(), nbad, ecand.num(), verts.num(), edrss);
         lasti = i;
       }
       if (a3d_spawn) output_poly(*a3d_spawn, true);
@@ -615,20 +609,20 @@ void do_stoc() {
     }
     if (verb >= 2) showdf("it %d, last search: %d wasted attempts\n", i, nbad);
   }
-  const int nat = narrow_cast<int>(sum(opstat.na));
-  const int nst = narrow_cast<int>(sum(opstat.ns));
+  const int nat = narrow_cast<int>(sum(op_stat.na));
+  const int nst = narrow_cast<int>(sum(op_stat.ns));
   if (verb >= 2) {
-    showdf("Endstoc:  (col=%d/%d, espl=%d/%d tot=%d/%d)\n", opstat.ns[OP_ecol], opstat.na[OP_ecol], opstat.ns[OP_espl],
-           opstat.na[OP_espl], nst, nat);
+    showdf("Endstoc:  (col=%d/%d, espl=%d/%d tot=%d/%d)\n",  //
+           op_stat.ns[OP_ecol], op_stat.na[OP_ecol], op_stat.ns[OP_espl], op_stat.na[OP_espl], nst, nat);
     showdf("Result of %d attempted operations:\n", nat);
-    for_int(i, R_NUM) showdf("  %5d %s\n", opstat.nor[i], orname[i].c_str());
+    for_int(i, R_NUM) showdf("  %5d %s\n", op_stat.nor[i], op_result_name[i].c_str());
   }
   if (verb >= 2) analyze_poly(0, "after_stoc");
 }
 
 void do_lfit(Args& args) {
   perhaps_initialize();
-  HH_STIMER(_lfit);
+  HH_STIMER("_lfit");
   int ni = args.get_int();
   int nli = args.get_int();
   if (verb >= 2) showdf("\n");
@@ -657,7 +651,7 @@ void apply_schedule() {
 }
 
 void do_reconstruct() {
-  HH_TIMER(_reconstruct);
+  HH_TIMER("_reconstruct");
   if (!spring) spring = spring_sched[0];
   perhaps_initialize();
   do_gfit(as_lvalue(Args{"0"}));
@@ -665,14 +659,14 @@ void do_reconstruct() {
 }
 
 void do_simplify() {
-  HH_TIMER(_simplify);
+  HH_TIMER("_simplify");
   if (!spring) spring = spring_sched[0];
   perhaps_initialize();
   apply_schedule();
 }
 
 void do_outpoly(Args& args) {
-  HH_TIMER(_outpoly);
+  HH_TIMER("_outpoly");
   WFile os(args.get_filename());
   WSA3dStream oa3d(os());
   output_poly(oa3d);
@@ -688,9 +682,9 @@ void do_spawn(Args& args) {
 
 int main(int argc, const char** argv) {
   ParseArgs args(argc, argv);
-  HH_ARGSD(pfilename, "file.a3d : initial polygon (can be -)");
+  HH_ARGSD(pfilename, "file.a3d : initial polygon (can be '-')");
   HH_ARGSD(sample, "n : sample n points from polygon");
-  HH_ARGSD(filename, "file.pts : point data (can be -)");
+  HH_ARGSD(filename, "file.pts : point data (can be '-')");
   HH_ARGSD(opencurve, "n : create initial polyline from points");
   HH_ARGSD(closedcurve, "n : create initial polygon from points");
   HH_ARGSP(crep, "v : set constant for representation energy");
@@ -707,12 +701,13 @@ int main(int argc, const char** argv) {
   HH_ARGSF(nooutput, ": don't print final poly on stdout");
   HH_ARGSP(fliter, "factor : modify # local iters done in stoc");
   HH_ARGSP(verb, "i : verbosity level (1=avg, 2=more, 3=lots, 4=huge)");
-  HH_TIMER(Polyfit);
-  showdf("%s", args.header().c_str());
-  args.parse();
-  perhaps_initialize();
-  analyze_poly(0, "FINAL");
-  HH_TIMER_END(Polyfit);
+  {
+    HH_TIMER("Polyfit");
+    showdf("%s", args.header().c_str());
+    args.parse();
+    perhaps_initialize();
+    analyze_poly(0, "FINAL");
+  }
   if (file_spawn) {
     a3d_spawn = nullptr;
     file_spawn = nullptr;

@@ -103,7 +103,7 @@ int main() {
     }
     SHOW(v1);
     SHOW(v2);
-    // I did not enable ArrayView::operator=()
+    // ArrayView::operator=() is not enabled.
     // m[0] = m[2] = v1;
     // m[1] = m[3] = v2;
     m[0].assign(v1);
@@ -135,9 +135,20 @@ int main() {
     SHOW(max(m));
     SHOW(sum(m));
     SHOW(mean(m));
-    SHOW(inverse(m));
-    SHOW(mat_mul(m, inverse(m)));
-    SHOW(mat_mul(mat_mul(m, m), inverse(m)));
+    {
+      Matrix<float> expected{
+          {-1.f / 6.f, 0.f, 1.f / 6.f, 0.f},
+          {-1.f / 3.f, 1.f / 6.f, -1.f / 3.f, 1.f / 6.f},
+          {11.f / 18.f, 1.f / 9.f, 1.f / 6.f, -1.f / 3.f},
+          {0.f, -1.f / 6.f, 0.f, 1.f / 6.f},
+      };
+      assertx(dist(inverse(m), expected) < 1e-6f);
+    }
+    assertx(dist(mat_mul(m, inverse(m)), identity_mat<float>(4)) < 1e-6f);
+    {
+      Matrix<float> expected{{1.f, 2.f, 3.f, 4.f}, {8.f, 7.f, 6.f, 5.f}, {7.f, 2.f, 3.f, 4.f}, {8.f, 7.f, 6.f, 11.f}};
+      assertx(dist(mat_mul(mat_mul(m, m), inverse(m)), expected) < 1e-4f);
+    }
   }
   {
     const int n = 8;
@@ -159,22 +170,7 @@ int main() {
   }
 }
 
-#if 0  // Matrix is a Grid, instanced in Grid_test
-namespace hh {
-template class CMatrixView<unsigned>;
-template class CMatrixView<double>;
-template class CMatrixView<const int*>;
-
-template class MatrixView<unsigned>;
-template class MatrixView<double>;
-template class MatrixView<const int*>;
-
-template class Matrix<unsigned>;
-template class Matrix<double>;
-template class Matrix<const int*>;
-
-using U = unique_ptr<int>;
-template <> void Matrix<U>::operator=(CMatrixView<U>) {}  // definition illegal
-template class Matrix<U>;
-}  // namespace hh
-#endif
+// Matrix is an alias for Grid, so it cannot be directly instanced; however, Grid<2, T> is instanced in Grid_test.cpp.
+// namespace hh {
+// template class CMatrixView<unsigned>;
+// }  // namespace hh

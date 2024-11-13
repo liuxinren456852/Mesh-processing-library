@@ -16,10 +16,10 @@
   image2.set_zsize(4);
   Pixel& pix = image[y][x];
   uint8_t c = image(y, x)[z];
-  // ysize() == #rows, xsize() == #columns, zsize() == #channels
-  // Valid values for zsize(): 1: grayscale image: Red == Green == Blue  (Alpha is undefined)
-  //                           3: RGB image  (default)  (Alpha is undefined)
-  //                           4: RGBA image
+  // ysize() == #rows, xsize() == #columns, zsize() == #channels.
+  // Valid values for zsize(): 1: grayscale image: Red == Green == Blue  (Alpha is undefined);
+  //                           3: RGB image  (default)  (Alpha is undefined);
+  //                           4: RGBA image.
   // Row-column origin is at upper-left corner!
   //  (This is consistent with *.jpg, *.png, *.ppm, DirectX.)
   //  (In contrast, *.rgb, *.bmp, OpenGL glTexImage2D() have image origin at lower-left.)
@@ -44,6 +44,7 @@ class Image : public Matrix<Pixel> {
   explicit Image(const Vec2<int>& pdims, Pixel pix) : Image(pdims) { fill(*this, pix); }
   explicit Image(const Image&) = default;
   explicit Image(const base& image) : base(image.dims()) { base::assign(image); }
+  explicit Image(const string& filename) { read_file(filename); }
   Image(Image&& m) noexcept { swap(*this, m); }
   Image(base&& m) noexcept { swap(implicit_cast<base&>(*this), m); }
   Image& operator=(Image&& image) noexcept;
@@ -57,13 +58,13 @@ class Image : public Matrix<Pixel> {
   Attrib& attrib() { return _attrib; }
   void set_zsize(int n);
   int zsize() const { return attrib().zsize; }
-  void set_suffix(string suffix) { attrib().suffix = std::move(suffix); }  // e.g. "jpg"; for writing '-'
-  const string& suffix() const { return attrib().suffix; }                 // e.g. "rgb"; used for reading '-'
+  void set_suffix(string suffix) { attrib().suffix = std::move(suffix); }  // e.g. "jpg"; for writing '-'.
+  const string& suffix() const { return attrib().suffix; }                 // e.g. "rgb"; used for reading '-'.
   void set_silent_io_progress(bool b) { _silent_io_progress = b; }
-  // filename may be "-" for std::cin;  may throw std::runtime_error
+  // Filename may be "-" for std::cin;  may throw std::runtime_error.
   void read_file(const string& filename) { read_file_i(filename, false); }
   void read_file_bgra(const string& filename) { read_file_i(filename, true); }
-  // filename may be "-" for std::cout; may throw std::runtime_error; suffix() is mutable
+  // Filename may be "-" for std::cout; may throw std::runtime_error; suffix() is mutable.
   void write_file(const string& filename) const { write_file_i(filename, false); }
   void write_file_bgra(const string& filename) const { write_file_i(filename, true); }
 
@@ -72,12 +73,12 @@ class Image : public Matrix<Pixel> {
   void to_color();
   void scale(const Vec2<float>& syx, const Vec2<FilterBnd>& filterbs, const Pixel* bordervalue = nullptr);
   struct Attrib {
-    int zsize{3};            // number of components per pixel; must be either 1, 3, or 4
-    string suffix;           // e.g. "rgb"; "" if unknown; to identify format of read_file("-") and write_file("-")
-   private:                  // reserved for Image class internals
-    Array<uchar> exif_data;  // zero length if absent; could also be implemented easily as string
-    string orig_filename;    // for Image_wic, upon writing image, it can reopen source file to copy metadata
-    string orig_suffix;      // for Image_wic, indicates type of original image container
+    int zsize{3};            // Number of components per pixel; must be either 1, 3, or 4.
+    string suffix;           // e.g. "rgb"; "" if unknown; to identify format of read_file("-") and write_file("-").
+   private:                  // Reserved for Image class internals.
+    Array<uchar> exif_data;  // Zero length if absent; could also be implemented easily as string.
+    string orig_filename;    // For Image_wic, upon writing image, it can reopen source file to copy metadata.
+    string orig_suffix;      // For Image_wic, indicates type of original image container.
     friend Image;
     friend details::ImageLibs;
   };
@@ -102,17 +103,17 @@ bool filename_is_image(const string& filename);
 // Return predicted image suffix given first byte of file, or "" if unrecognized.
 string image_suffix_for_magic_byte(uchar c);
 
-// &image == &newimage is OK
+// &image == &newimage is OK.
 Image scale(const Image& image, const Vec2<float>& syx, const Vec2<FilterBnd>& filterbs,
             const Pixel* bordervalue = nullptr, Image&& newimage = Image());
 
-inline bool equal(const Pixel& pix1, const Pixel& pix2, int nz) {
-  ASSERTX(nz >= 3);
-  return pix1[0] == pix2[0] && pix1[1] == pix2[1] && pix1[2] == pix2[2] && (nz < 4 || pix1[3] == pix2[3]);
-}
-
 inline bool rgb_equal(const Pixel& pix1, const Pixel& pix2) {
   return pix1[0] == pix2[0] && pix1[1] == pix2[1] && pix1[2] == pix2[2];
+}
+
+inline bool equal(const Pixel& pix1, const Pixel& pix2, int nz) {
+  ASSERTX(nz >= 3);
+  return rgb_equal(pix1, pix2) && (nz < 4 || pix1[3] == pix2[3]);
 }
 
 inline int rgb_dist2(const Pixel& pix1, const Pixel& pix2) {
@@ -121,8 +122,8 @@ inline int rgb_dist2(const Pixel& pix1, const Pixel& pix2) {
 
 // Convert float/double matrix (with 0.f == black and 1.f == white) to an image.
 template <typename T> Image as_image(CMatrixView<T> matrix) {
-  static_assert(std::is_floating_point<T>::value, "T must be float/double");
-  // (renamed image to image1 due to buggy VS2015 warning about shadowed variable)
+  static_assert(std::is_floating_point_v<T>, "T must be float/double");
+  // (Renamed image to image1 due to Visual Studio bug "C4459: declaration ... hides global declaration".)
   Image image1(matrix.dims());
   parallel_for_each(range(image1.ysize()), [&](const int y) {
     for_int(x, image1.xsize()) {
@@ -135,22 +136,20 @@ template <typename T> Image as_image(CMatrixView<T> matrix) {
 // Specialize as_image() to grid of Vector4.
 inline Image as_image(CMatrixView<Vector4> grid) {
   Image image(grid.dims());
-  parallel_for_coords(
-      image.dims(),
-      [&](const Vec2<int>& yx) {
-        image[yx] = grid[yx].pixel();
-        if (0) image[yx][3] = 255;
-        if (image[yx][3] != 255) image.set_zsize(4);
-      },
-      10);
+  parallel_for_coords({10}, image.dims(), [&](const Vec2<int>& yx) {
+    image[yx] = grid[yx].pixel();
+    if (0) image[yx][3] = 255;
+    if (image[yx][3] != 255) image.set_zsize(4);
+  });
   return image;
 }
 
 // Specialize as_image() to grid of Vec3<float>.
 inline Image as_image(CMatrixView<Vec3<float>> grid) {
   Image image(grid.dims());
-  parallel_for_coords(
-      image.dims(), [&](const Vec2<int>& yx) { image[yx] = Vector4(concat(grid[yx], V(1.f))).pixel(); }, 10);
+  parallel_for_coords({10}, image.dims(), [&](const Vec2<int>& yx) {  //
+    image[yx] = Vector4(concat(grid[yx], V(1.f))).pixel();
+  });
   return image;
 }
 
@@ -161,7 +160,7 @@ inline Image as_image(CMatrixView<Pixel> grid) {
   return image;
 }
 
-// *** Conversions between YUV and RGB color spaces
+// *** Conversions between YUV and RGB color spaces.
 
 // Image consisting of an 8-bit luminance matrix and a 2*8-bit chroma matrix at half spatial resolution.
 class Nv12 {
@@ -179,8 +178,8 @@ class Nv12 {
   CMatrixView<Vec2<uint8_t>> get_UV() const { return _mat_UV; }
 
  private:
-  Matrix<uint8_t> _mat_Y;         // luminance
-  Matrix<Vec2<uint8_t>> _mat_UV;  // chroma at half the spatial resolution
+  Matrix<uint8_t> _mat_Y;         // Luminance.
+  Matrix<Vec2<uint8_t>> _mat_UV;  // Chroma at half the spatial resolution.
 };
 
 // View of an image consisting of an 8-bit luminance matrix and 2*8-bit chroma at half spatial resolution.
@@ -196,8 +195,8 @@ class Nv12View {
   CMatrixView<Vec2<uint8_t>> get_UV() const { return _mat_UV; }
 
  private:
-  MatrixView<uint8_t> _mat_Y;         // luminance
-  MatrixView<Vec2<uint8_t>> _mat_UV;  // chroma at half the spatial resolution
+  MatrixView<uint8_t> _mat_Y;         // Luminance.
+  MatrixView<Vec2<uint8_t>> _mat_UV;  // Chroma at half the spatial resolution.
 };
 
 // Constant view of an image consisting of an 8-bit luminance matrix and 2*8-bit chroma at half spatial resolution.
@@ -213,42 +212,42 @@ class CNv12View {
   CMatrixView<Vec2<uint8_t>> get_UV() const { return _mat_UV; }
 
  private:
-  CMatrixView<uint8_t> _mat_Y;         // luminance
-  CMatrixView<Vec2<uint8_t>> _mat_UV;  // chroma at half the spatial resolution
+  CMatrixView<uint8_t> _mat_Y;         // Luminance.
+  CMatrixView<Vec2<uint8_t>> _mat_UV;  // Chroma at half the spatial resolution.
 };
 
-// Listed as "numerical approximations" on http://en.wikipedia.org/wiki/YUV
-// Also found at http://msdn.microsoft.com/en-us/library/aa917087.aspx
+// Listed as "numerical approximations" on https://en.wikipedia.org/wiki/YUV
+// Also found at https://learn.microsoft.com/en-us/previous-versions/aa917087(v=msdn.10)
 // This may not correspond to YUV format used in ATSC HD video?
-// Also, it condenses Y to range [16, 235]; strange.  Thus RGB_to_Y(Pixel::gray(128)) == 126.
+// Also, it condenses Y to range [16, 235]; strange.  Thus Y_from_RGB(Pixel::gray(128)) == 126.
 
 // Convert RGB Pixel to luminance Y value.
-inline uint8_t RGB_to_Y(const Pixel& pix) {  // LumaFromRGB_CCIR601YCbCr
+inline uint8_t Y_from_RGB(const Pixel& pix) {  // LumaFromRGB_CCIR601YCbCr.
   return narrow_cast<uint8_t>((66 * int{pix[0]} + 129 * int{pix[1]} + 25 * int{pix[2]} + 128 + 16 * 256) >> 8);
 }
 
 // Convert RGB Pixel to chroma U value.
-inline uint8_t RGB_to_U(const Pixel& pix) {  // CbFromRGB_CCIR601YCbCr
+inline uint8_t U_from_RGB(const Pixel& pix) {  // CbFromRGB_CCIR601YCbCr.
   return narrow_cast<uint8_t>((-38 * pix[0] - 74 * pix[1] + 112 * pix[2] + 128 + 128 * 256) >> 8);
 }
 
 // Convert RGB Pixel to chroma V value.
-inline uint8_t RGB_to_V(const Pixel& pix) {  // CrFromRGB_CCIR601YCbCr
+inline uint8_t V_from_RGB(const Pixel& pix) {  // CrFromRGB_CCIR601YCbCr.
   return narrow_cast<uint8_t>((112 * pix[0] - 94 * pix[1] - 18 * pix[2] + 128 + 128 * 256) >> 8);
 }
 
 // Convert {R, G, B} values to YUV Vector4i.
-inline Vector4i RGB_to_YUV_Vector4i(int r, int g, int b) {
+inline Vector4i YUV_Vector4i_from_RGB(int r, int g, int b) {
   return ((r * Vector4i(66, -38, 112, 0) + g * Vector4i(129, -74, -94, 0) + b * Vector4i(25, 112, -18, 0) +
            Vector4i(128 + 16 * 256, 128 + 128 * 256, 128 + 128 * 256, 255 * 256)) >>
           8);
 }
 
 // Convert {R, G, B} values to YUV Pixel.
-inline Pixel RGB_to_YUV_Pixel(int r, int g, int b) { return RGB_to_YUV_Vector4i(r, g, b).pixel(); }
+inline Pixel YUV_Pixel_from_RGB(int r, int g, int b) { return YUV_Vector4i_from_RGB(r, g, b).pixel(); }
 
 // Convert {Y, U, V} values to RGB Vector4i.
-inline Vector4i YUV_to_RGB_Vector4i(int y, int u, int v) {
+inline Vector4i RGB_Vector4i_from_YUV(int y, int u, int v) {
   return ((y * Vector4i(298, 298, 298, 0) + u * Vector4i(0, -100, 516, 0) + v * Vector4i(409, -208, 0, 0) +
            Vector4i(128 - 298 * 16 - 409 * 128, 128 - 298 * 16 + 100 * 128 + 208 * 128, 128 - 298 * 16 - 516 * 128,
                     255 * 256)) >>
@@ -256,7 +255,7 @@ inline Vector4i YUV_to_RGB_Vector4i(int y, int u, int v) {
 }
 
 // Convert {Y, U, V} values to RGB Pixel.
-inline Pixel YUV_to_RGB_Pixel(int y, int u, int v) { return YUV_to_RGB_Vector4i(y, u, v).pixel(); }
+inline Pixel RGB_Pixel_from_YUV(int y, int u, int v) { return RGB_Vector4i_from_YUV(y, u, v).pixel(); }
 
 // Convert 8-bit luminance plus half-spatial resolution UV chroma to RGBA image.
 void convert_Nv12_to_Image(CNv12View nv12v, MatrixView<Pixel> frame);
@@ -269,22 +268,22 @@ void convert_Image_to_Nv12(CMatrixView<Pixel> frame, Nv12View nv12v);
 
 void scale(CNv12View nv12, const Vec2<FilterBnd>& filterbs, const Pixel* bordervalue, Nv12View new_nv12);
 
-// *** Image IO
+// *** Image IO.
 
-#if 0  // omitting WIC may allow writing image domains larger than 4 GiB
+#if 0  // Omitting WIC may allow writing image domains larger than 4 GiB.
 #define HH_NO_IMAGE_WIC
 #endif
 
-#if 0  // temporarily enable Image_libs even when WIC is available
+#if 0  // Temporarily enable Image_libs even when WIC is available.
 #define HH_IMAGE_LIBS_TOO
 #endif
 
-#if 0  // test the use of ffmpeg
+#if 0  // Test the use of ffmpeg.
 #define HH_NO_IMAGE_WIC
 #define HH_NO_IMAGE_LIBS
 #endif
 
-#if !defined(HH_NO_IMAGE_WIC) && defined(_MSC_VER)  // mingw doesn't recognize <wincodecsdk.h>
+#if !defined(HH_NO_IMAGE_WIC) && defined(_MSC_VER)  // mingw doesn't recognize <wincodecsdk.h>.
 #define HH_IMAGE_HAVE_WIC
 #endif
 

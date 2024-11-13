@@ -69,9 +69,9 @@ compare(ar2, ar1, tol) = 0
 compare(ar1, ar1, tol) = 0
 compare(ar2, ar2, tol) = 0
 mean(ar) = 12.5
-details::has_begin<Array<float>>::value ? 1 : 0 = 1
-details::has_begin<std::fstream>::value ? 1 : 0 = 0
-!!details::has_begin<S>::value = 0
+is_range_v<Array<float>> ? 1 : 0 = 1
+is_range_v<std::fstream> ? 1 : 0 = 0
+is_range_v<S> = 0
 type_name<mean_type_t<float>>() = double
 type_name<mean_type_t<double>>() = double
 type_name<mean_type_t<char>>() = float
@@ -94,4 +94,42 @@ ar = Array<float>(5) {
   0
   2.7
   -3.3
+}
+i = 36
+i = 16
+i = 4
+i = 100
+i = 121
+result = Array<int>(17) {
+  1
+  2
+  3
+  4
+  5
+  6
+  7
+  8
+  9
+  10
+  11
+  12
+  13
+  14
+  15
+  16
+  17
+}
+ar2 = Array<int>(2) {
+  4
+  5
+}
+indices = Array<int>(3) {
+  0
+  1
+  2
+}
+chars = Array<char>(3) {
+  A
+  B
+  C
 }

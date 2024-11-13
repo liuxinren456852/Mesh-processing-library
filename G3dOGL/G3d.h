@@ -2,9 +2,12 @@
 #ifndef MESH_PROCESSING_G3DOGL_G3D_H_
 #define MESH_PROCESSING_G3DOGL_G3D_H_
 
+#include <optional>
+
 #include "G3dOGL/HB.h"
 #include "libHh/Array.h"
 #include "libHh/Bbox.h"
+#include "libHh/FrameIO.h"
 #include "libHh/GMesh.h"
 #include "libHh/Geometry.h"
 #include "libHh/Sac.h"
@@ -58,19 +61,36 @@ extern bool spacekill;           // kill g3d when space is hit
 extern bool cur_needs_redraw;    // current window calls for a redraw
 extern bool prev_needed_redraw;  // previous window called for a redraw
 
+struct SelectedVertex {
+  int obn;
+  GMesh* mesh;
+  Vertex v;
+};
+
+struct SelectedEdge {
+  int obn;
+  GMesh* mesh;
+  Edge e;
+  Point inter;
+};
+
+struct SelectedFace {
+  int obn;
+  GMesh* mesh;
+  Face f;
+};
+
 extern int button_active;  // 0=no, 1-3=which button
-struct sselected {
+struct Selected {
   bool shift;
   Vec2<float> yxpressed;  // location button was initially pressed
   Vec2<float> yx;         // current location
   Vec2<float> yxio;       // change in location of button, misc. scales
   Vec2<float> yxfo;
-  int obn;
-  GMesh* mesh;
-  Vertex v;
+  std::optional<SelectedVertex> selected_vertex;
   Frame frel;  // for !object_mode, change of axis transform
 };
-extern sselected selected;
+extern Selected selected;
 
 // viewing transforms
 extern Frame tview;  // view offset
@@ -92,7 +112,6 @@ extern bool ob1_updated;
 
 // mesh manipulation
 extern float anglethresh;  // dihedral angle threshold
-extern bool subdivmode;    // subdivision surface editing mode
 
 // level of detail
 extern bool lod_mode;
@@ -101,10 +120,6 @@ extern float lod_level;
 extern float override_frametime;  // if nonzero, constant frame time
 
 extern Point rec_point;
-
-extern int demofly_mode;
-extern float demofly_idle_time;
-extern float demofly_idle_time_thresh;
 
 class object {
  public:
@@ -117,11 +132,10 @@ class object {
   void set_vis(bool i);
   Frame& tm();
   const Point& center() const;  // mode-dependent center in world coordinates
-  const Bbox& bbox() const;
+  const Bbox<float, 3>& bbox() const;
   float radius() const;
-  void update();                    // update HB if necessary
-  GMesh* get_mesh();                // creates if non-existent
-  void override_mesh(GMesh* mesh);  // nullptr ends override
+  void update();      // update HB if necessary
+  GMesh* get_mesh();  // creates if non-existent
  private:
   friend class objects;
   int _obn;
@@ -129,12 +143,11 @@ class object {
   bool _vis{true};              // is visible
   bool _def{false};             // is non-empty
   Point _pavg;                  // estimated centroid
-  Bbox _bbox{Point(0.f, 0.f, 0.f), Point(0.f, 0.f, 0.f)};
+  Bbox<float, 3> _bbox{Point(0.f, 0.f, 0.f), Point(0.f, 0.f, 0.f)};
   float _radius;             // estimated object radius
   bool _needs_update{true};  // wants HB update
   Vec3<Stat> _stat_coord;    // statistics on each coordinate
   unique_ptr<GMesh> _mesh;
-  GMesh* _override_mesh{nullptr};
 };
 
 class objects {
@@ -152,9 +165,9 @@ class objects {
 extern objects g_obs;
 
 // G3d
-void UpdateFrame(int obn, const Frame& f, float z);
+void UpdateFrame(const ObjectFrame& object_frame);
 void ExpandStateFilename();
-void UpdateOb1Bbox(const Bbox& bbox);
+void UpdateOb1Bbox(const Bbox<float, 3>& bbox);
 
 // G3devent
 bool KeyPressed(const string& s);
@@ -168,7 +181,6 @@ void Applyq(const Frame& tq);
 void Draw();
 void ShowInfo();
 void RecomputeSharpEdges(GMesh& mesh);
-void ClearSubMesh();
 void Dolly(const Vec2<float>& yxq);
 void update_lod();
 

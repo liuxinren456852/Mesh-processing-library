@@ -2,14 +2,14 @@
 #ifndef MESH_PROCESSING_G3DOGL_HB_H_
 #define MESH_PROCESSING_G3DOGL_HB_H_
 
+#include <optional>
+
 #include "libHh/Array.h"
 #include "libHh/Flags.h"
 #include "libHh/Geometry.h"
 
 namespace g3d {
 extern const hh::FlagMask mflag_ok;
-extern const hh::FlagMask vflag_ok;
-extern const hh::FlagMask fflag_ok;
 }  // namespace g3d
 
 namespace hh {
@@ -22,10 +22,11 @@ namespace HB {
 // Screen coordinate system is (y = 0, x = 0) top left to (y = 1, x = 1) bottom right.
 // Hither and yonder planes may be 0.f (disabled).
 
+// ret: success
 bool init(Array<string>& aargs,
           bool (*pfkeyp)(const string& s),  // ret: handled
           void (*pfbutp)(int butnum, bool pressed, bool shift, const Vec2<float>& yx), void (*pfwheel)(float v),
-          void (*pfdraw)());  // ret: success
+          void (*pfdraw)());
 
 // call after init() and before open():
 void set_window_title(string s);
@@ -39,7 +40,7 @@ void quit();  // user requests open() to return
 void redraw_later();
 void redraw_now();
 Vec2<int> get_extents();
-bool get_pointer(Vec2<float>& yxf);  // ret: false if no info
+std::optional<Vec2<float>> get_pointer();  // (0, 0)=(top, left).
 void set_camera(const Frame& p_real_t, float p_real_zoom, const Frame& p_view_t, float p_view_zoom);
 float get_hither();
 float get_yonder();
@@ -48,9 +49,15 @@ void set_yonder(float y);
 void set_current_object(int obn);  // hook for lighting specific.
 void update_seg(int segn, const Frame& f, bool vis);
 void draw_space();
-bool special_keypress(char ch);                                       // ret: recognized
-string show_info();                                                   // info line state string
-bool world_to_vdc(const Point& pi, float& xo, float& yo, float& zo);  // set zo, ret: pi_in_front -> (xo, yo)
+bool special_keypress(char ch);  // ret: recognized
+string show_info();              // info line state string
+
+struct VdcResult {
+  float zs;
+  std::optional<Vec2<float>> xys;  // in_front ? (xs, ys) : {}.
+};
+VdcResult vdc_from_world(const Point& pi);
+
 void draw_segment(const Vec2<float>& yx1, const Vec2<float>& yx2);
 Vec2<int> get_font_dims();  // height, width
 void draw_text(const Vec2<float>& yx, const string& s);
